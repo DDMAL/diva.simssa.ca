@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" xmlns:bx="https://boxy-svg.com">
+  <text style="fill: rgb(51, 51, 51); font-family: Nunito; font-size: 88px; font-weight: 701; letter-spacing: -4px; white-space: pre;"><tspan x="115.838" y="298.198">diva</tspan><tspan style="fill: rgb(83, 100, 243);">js</tspan></text>
+  <defs>
+    <style bx:fonts="Nunito">@import url(https://fonts.googleapis.com/css2?family=Nunito%3Aital%2Cwght%400%2C200..1000%3B1%2C200..1000&amp;display=swap);</style>
+    <bx:export>
+      <bx:file format="svg" path="diva-logo.svg" normalization="{&quot;removeBoxySVGMetadata&quot;:true,&quot;removeForeignMetadata&quot;:true,&quot;removeAnimations&quot;:true,&quot;resetTransformOrigins&quot;:true,&quot;convertTextsToPaths&quot;:true}"/>
+    </bx:export>
+  </defs>
+  <g transform="matrix(1, 0, 0, 1, -7.870636, -0.191515)">
+    <ellipse style="stroke-width: 0.844; filter: none; fill: rgb(255, 255, 255); transform-box: fill-box; transform-origin: 50% 50%;" cx="294.24" cy="297.047" rx="8.626" ry="8.598" transform="matrix(0.999826, -0.018679, 0.018801, 0.999823, -22.202217, 0.37312)"/>
+  </g>
+</svg>

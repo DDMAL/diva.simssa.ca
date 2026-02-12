@@ -1,0 +1,45 @@
+{{ define "main" }}
+<section class="hero">
+  <div class="container">
+    <img class="hero-logo" src="/images/diva-logo.svg" alt="Diva.js logo" />
+    <p class="tagline">IIIF digital document image viewer</p>
+    <div class="hero-actions">
+      <a href="/docs/getting-started" class="btn btn-primary">Get Started</a>
+      <a href="{{ .Site.Params.github }}" class="btn btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+  </div>
+  <div class="hero-caption">MS Bodley 264, f. 188v</div>
+</section>
+
+<section class="features">
+  <div class="container">
+    <h1>Features</h1>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>IIIF Support</h3>
+        <p>Support for IIIF Presentation API v2 and v3, including collections, manifests, and ranges.</p>
+      </div>
+      <div class="feature">
+        <h3>Document Image Processing</h3>
+        <p>Advanced image filters designed to assist with difficult-to-read historical documents.</p>
+      </div>
+      <div class="feature">
+        <h3>Page View</h3>
+        <p>Detailed page view with multiple viewing modes, two-up spreads, and comprehensive filter controls.</p>
+      </div>
+      <div class="feature">
+        <h3>Responsive Design</h3>
+        <p>Mobile-friendly interface with touch support and responsive layouts.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="demo">
+  <div class="container">
+    <h2>Try It</h2>
+    <p></p>
+    <a href="/examples" class="btn btn-primary">View Examples</a>
+  </div>
+</section>
+{{ end }}

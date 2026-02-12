@@ -1,0 +1,32 @@
+baseURL = "https://diva.simssa.ca/"
+languageCode = "en-gb"
+title = "Diva.js"
+
+[params]
+  description = "A IIIF image viewer with advanced image processing capabilities"
+  github = "https://github.com/ddmal/diva.js"
+
+[menu]
+  [[menu.main]]
+    name = "Home"
+    url = "/"
+    weight = 1
+  [[menu.main]]
+    name = "Documentation"
+    url = "/docs/"
+    weight = 2
+  [[menu.main]]
+    name = "Examples"
+    url = "/examples/"
+    weight = 3
+  [[menu.main]]
+    name = "GitHub"
+    url = "https://github.com/ddmal/diva.js"
+    weight = 4
+
+[markup]
+  [markup.highlight]
+    style = "github"
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
