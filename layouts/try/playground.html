@@ -99,9 +99,7 @@
 {{ define "main" }}
 <section class="container container-wide content">
   <h1>{{ .Title }}</h1>
-  {{ with .Description }}
-    <p class="lead">{{ . }}</p>
-  {{ end }}
+  {{ .Content }}
 </section>
 
 <section class="container container-wide">

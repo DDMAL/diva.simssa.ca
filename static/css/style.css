@@ -357,6 +357,20 @@ pre code {
   margin-bottom: 0;
 }
 
+.footer-partner-logos {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.footer-partner-logo {
+  display: inline-block;
+  max-height: 100px;
+  width: auto;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .hero h1 {

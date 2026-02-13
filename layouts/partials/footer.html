@@ -1,6 +1,14 @@
 <footer class="site-footer">
   <div class="container">
-    <p>&copy; {{ now.Year }} Diva.js. Licensed under the MIT License.</p>
+    <div class="footer-partner-logos">
+      <a href="https://rism.digital" target="_blank" rel="noopener">
+        <img src="{{ "images/digital-center.svg" | relURL }}" alt="RISM Digital Center" class="footer-partner-logo">
+      </a>
+      <a href="https://ddmal.ca/" target="_blank" rel="noopener">
+        <img src="{{ "images/ddmal-logo.svg" | relURL }}" alt="DDMAL" class="footer-partner-logo">
+      </a>
+    </div>
+    <p>&copy; {{ now.Year }} Andrew Hankinson, RISM Digital Center. Licensed under the MIT License.</p>
     <p>
       <a href="{{ .Site.Params.github }}" target="_blank" rel="noopener">GitHub</a>
     </p>
