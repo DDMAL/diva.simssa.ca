@@ -16,8 +16,8 @@ title = "Diva.js"
     url = "/docs/"
     weight = 2
   [[menu.main]]
-    name = "Examples"
-    url = "/examples/"
+    name = "Try It!"
+    url = "/try/"
     weight = 3
   [[menu.main]]
     name = "GitHub"

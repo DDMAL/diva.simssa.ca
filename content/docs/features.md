@@ -1,7 +1,7 @@
 ---
 title: "Features"
 description: "Core capabilities of Diva.js"
-weight: 1
+weight: 2
 ---
 
 Diva.js is a IIIF image viewer built for document reading. The features below focus on how users move through pages, how they interpret difficult images, and how the viewer handles structured documents.

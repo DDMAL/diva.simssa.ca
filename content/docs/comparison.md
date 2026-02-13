@@ -1,7 +1,7 @@
 ---
 title: "Why Diva.js?"
 description: "Some unique features of Diva.js"
-weight: 1
+weight: 3
 ---
 
 One of the best capabilities unlocked by the IIIF is the ability to choose the best kind of image viewer for a particular use. If you have access to the manifest, you can choose a viewer that gives you the tools you want.

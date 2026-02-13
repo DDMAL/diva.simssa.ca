@@ -1,0 +1,51 @@
+{{ define "head-extra" }}
+<style>
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  }
+  #diva-wrapper {
+    display: flex;
+    height: 80vh;
+    width: 100%;
+  }
+
+</style>
+{{ end }}
+
+{{ define "main" }}
+<section class="container container-wide content">
+  <h1>{{ .Title }}</h1>
+  {{ with .Description }}
+    <p class="lead">{{ . }}</p>
+  {{ end }}
+</section>
+
+<section class="container container-wide">
+  <div id="diva-wrapper"></div>
+</section>
+
+<section class="container container-wide content">
+  {{ .Content }}
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/openseadragon.min.js"></script>
+<script src="{{ .Params.divaScript | default "/js/diva.js" }}"></script>
+<script>
+  (function () {
+    if (typeof window.Diva !== 'function') {
+      return;
+    }
+    new Diva('diva-wrapper', {
+      objectData: '{{ .Params.manifest }}',
+      acceptHeaders: [],
+      showSidebar: true,
+      showTitle: true
+    });
+  })();
+</script>
+{{ end }}

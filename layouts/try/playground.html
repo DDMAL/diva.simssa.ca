@@ -1,0 +1,304 @@
+{{ define "head-extra" }}
+<style>
+    html,
+    body {
+        height: 100%;
+    }
+  #playground-controls {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 16px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-bg-alt);
+  }
+
+  .playground-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .playground-field label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .playground-field select,
+  .playground-field input {
+    height: 40px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 0.95rem;
+    background: #fff;
+  }
+
+  .playground-field input:disabled {
+    background: #f3f4f6;
+    color: var(--color-text-muted);
+  }
+
+  .playground-field.is-hidden {
+    display: none;
+  }
+
+  #playground-actions {
+    display: flex;
+    align-items: flex-end;
+  }
+
+  #playground-actions button {
+    height: 40px;
+    padding: 0 18px;
+    border: none;
+    border-radius: 8px;
+    background: var(--color-primary);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  #playground-actions button:hover {
+    background: var(--color-primary-dark);
+  }
+
+  #playground-status {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    margin-top: 8px;
+  }
+
+  #diva-wrapper {
+    display: flex;
+    height: 80vh;
+    width: 100%;
+  }
+
+  @media (max-width: 900px) {
+    #playground-controls {
+      grid-template-columns: repeat(6, 1fr);
+    }
+  }
+
+  @media (max-width: 640px) {
+    #playground-controls {
+      grid-template-columns: repeat(1, 1fr);
+    }
+
+    #playground-actions {
+      align-items: stretch;
+    }
+  }
+</style>
+{{ end }}
+
+{{ define "main" }}
+<section class="container container-wide content">
+  <h1>{{ .Title }}</h1>
+  {{ with .Description }}
+    <p class="lead">{{ . }}</p>
+  {{ end }}
+</section>
+
+<section class="container container-wide">
+  <form id="playground-controls">
+    <div class="playground-field" style="grid-column: span 4;">
+      <label for="manifest-select">Choose a manifest</label>
+      <select id="manifest-select" name="manifest-select"></select>
+    </div>
+    <div class="playground-field is-hidden" id="custom-url-field" style="grid-column: span 12;">
+      <label for="manifest-url">Or paste a manifest URL</label>
+      <input
+        id="manifest-url"
+        name="manifest-url"
+        type="url"
+        placeholder="https://example.org/iiif/manifest.json"
+      />
+    </div>
+    <div class="playground-field" style="grid-column: span 4;">
+      <label for="accept-select">Accept header</label>
+      <select id="accept-select" name="accept-select">
+        <option value="auto" selected>Auto</option>
+        <option value="v2">IIIF v2</option>
+        <option value="v3">IIIF v3</option>
+      </select>
+    </div>
+    <div class="playground-field" style="grid-column: span 4;">
+      <label for="language-select">Language override</label>
+      <select id="language-select" name="language-select">
+        <option value="auto" selected>Browser locale</option>
+        <option value="en">English (en)</option>
+        <option value="de">German (de)</option>
+        <option value="zh">Chinese (zh)</option>
+      </select>
+    </div>
+    <div id="playground-actions" style="grid-column: span 12;">
+      <button type="submit">Load manifest</button>
+    </div>
+  </form>
+  <div id="playground-status" role="status" aria-live="polite"></div>
+</section>
+
+<section class="container container-wide">
+    <div id="diva-wrapper"></div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/openseadragon.min.js"></script>
+<script src="/js/diva.js"></script>
+<script>
+    (function ()
+    {
+        if (typeof window.Diva !== "function")
+        {
+            return;
+        }
+
+        const manifests = [
+            {
+                label: "Bodleian Library MS. Ind. Inst. Misc. 22 (v2/v3)",
+                url: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/e32a277e-91e2-4a6d-8ba6-cc4bad230410.json"
+            },
+            {
+                label: "Bodleian Library Drink Map of Oxford, 1883 (v2/v3)",
+                url: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/ff0d368d-09be-4d45-a338-b988e3fd3102.json"
+            },
+            {
+                label: "e-codices: Top level collection",
+                url: "https://www.e-codices.unifr.ch/metadata/iiif/collection.json"
+            },
+
+           {
+                label: "Evangelistar: Perikopenbuch Heinrichs II.-BSB Clm 4452 (en/de/zh)",
+                url: "https://api.digitale-sammlungen.de/iiif/presentation/v2/bsb00087481/manifest"
+            },
+            {
+                label: "BnF. Département des Manuscrits. Latin 12044",
+                url: "https://gallica.bnf.fr/iiif/ark:/12148/btv1b6000531z/manifest.json",
+            },
+
+
+        ];
+
+        const acceptProfiles = {
+            auto: [],
+            v2: ["application/ld+json;profile=\"http://iiif.io/api/presentation/2/context.json\""],
+            v3: ["application/ld+json;profile=\"http://iiif.io/api/presentation/3/context.json\""]
+        };
+
+        const manifestSelect = document.getElementById("manifest-select");
+        const manifestUrlInput = document.getElementById("manifest-url");
+        const acceptSelect = document.getElementById("accept-select");
+        const status = document.getElementById("playground-status");
+        const languageSelect = document.getElementById("language-select");
+        const form = document.getElementById("playground-controls");
+        let viewer = null;
+
+        function setStatus(message)
+        {
+            status.textContent = message || "";
+        }
+
+        function populateManifests()
+        {
+            manifests.forEach((manifest) =>
+            {
+                const option = document.createElement("option");
+                option.value = manifest.url;
+                option.textContent = manifest.label;
+                manifestSelect.appendChild(option);
+            });
+
+            const customOption = document.createElement("option");
+            customOption.value = "custom";
+            customOption.textContent = "Custom URL";
+            manifestSelect.appendChild(customOption);
+        }
+
+        function isCustomSelected()
+        {
+            return manifestSelect.value === "custom";
+        }
+
+        function updateUrlState()
+        {
+            const customField = document.getElementById("custom-url-field");
+            const showCustom = isCustomSelected();
+            manifestUrlInput.disabled = !showCustom;
+            customField.classList.toggle("is-hidden", !showCustom);
+            if (!showCustom)
+            {
+                manifestUrlInput.value = "";
+            }
+        }
+
+        function resolveManifestUrl()
+        {
+            if (isCustomSelected())
+            {
+                return manifestUrlInput.value.trim();
+            }
+            return manifestSelect.value;
+        }
+
+        function resolveAcceptHeaders()
+        {
+            return acceptProfiles[acceptSelect.value] || [];
+        }
+
+        function loadViewer()
+        {
+            const manifestUrl = resolveManifestUrl();
+            if (!manifestUrl)
+            {
+                setStatus("Enter a manifest URL or choose one from the list.");
+                return;
+            }
+
+            const acceptHeaders = resolveAcceptHeaders();
+            const viewerEl = document.getElementById("diva-wrapper");
+            viewerEl.innerHTML = "";
+
+            if (viewer && typeof viewer.destroy === "function")
+            {
+                viewer.destroy();
+            }
+
+            const options = {
+                objectData: manifestUrl,
+                acceptHeaders: acceptHeaders,
+                showSidebar: true,
+                showTitle: true
+            };
+
+            if (languageSelect.value !== "auto")
+            {
+                options.setLanguage = languageSelect.value;
+            }
+
+            viewer = new Diva("diva-wrapper", options);
+
+            setStatus("Loading " + manifestUrl);
+        }
+
+        populateManifests();
+        updateUrlState();
+
+        manifestSelect.addEventListener("change", function ()
+        {
+            updateUrlState();
+        });
+
+        form.addEventListener("submit", function (event)
+        {
+            event.preventDefault();
+            loadViewer();
+        });
+
+        loadViewer();
+    })();
+</script>
+{{ end }}

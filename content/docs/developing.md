@@ -1,7 +1,7 @@
 ---
 title: "Developing"
 description: "Diva.js internals and how it's built"
-weight: 1
+weight: 4
 ---
 
 Diva.js is built from two main pieces: an Elm application that manages state and UI, and a TypeScript layer that provides the custom OpenSeadragon viewer element and bridges Elm ports to the browser.
@@ -29,6 +29,18 @@ Key source files:
 - **esbuild** for bundling the TypeScript + Elm output.
 - **lightningcss** for bundling and minifying the CSS. 
 
+## elm-iiif
+
+At the core of the manifest parsing is the elm-iiif package. This was built specifically for the new verion of Diva.js, but has been released as a separate package so that others can use it.
+
+By building type-safe JSON decoders, it is less likely that non-compliant manifests will produce undefined behaviour. Most likely, a manifest that does not conform to the standard will fail
+to parse, and will refuse to load in the viewer. Some leeway is built in, but for the most part, IIIF response parsing is very strict in Diva.js.
+
+The elm-iiif package also contains parsers and helpers for working with IIIF Image API URLs. For example, it contains type-safe constructors for the various parameters that can make up a
+IIIF Image API URL, and will use these values to build valid Image API URLs.
+
+More information can be found on the [Elm packages site](https://package.elm-lang.org/packages/rism-digital/elm-iiif/latest/). 
+
 ## Development Setup
 
 Prerequisites:
@@ -36,12 +48,16 @@ Prerequisites:
 - Node.js + Yarn
 - make
 - Elm (for building the Elm source)
+- elm-format (for code formatting)
+- elm-review (for checking the Elm coding style)
 
 Install dependencies:
 
 ```bash
 yarn install
 ```
+
+The Elm dependencies (in `elm.json`) will automatically install when the package is built the first time.
 
 ## Building
 
@@ -85,3 +101,10 @@ We have a weird thing with using Allman style in the TypeScript files. To reform
 ```bash
 yarn run format
 ```
+
+There is also an elm-review configuration, which should be checked for any violations:
+
+```bash
+elm-review
+```
+
