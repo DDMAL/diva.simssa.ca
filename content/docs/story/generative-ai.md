@@ -1,5 +1,5 @@
 ---
-title: "Continued Development and Generative AI"
+title: "The New Diva.js and Generative AI"
 description: "Stalls, inspiration, and the use of AI"
 weight: 2
 ---
