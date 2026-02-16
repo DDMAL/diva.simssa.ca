@@ -24,6 +24,14 @@ body {
   line-height: 1.6;
   color: var(--color-text);
   background-color: var(--color-bg);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1 0 auto;
 }
 
 .container {
@@ -367,6 +375,7 @@ pre code {
   border-top: 1px solid var(--color-border);
   padding: 32px 0;
   text-align: center;
+  margin-top: auto;
 }
 
 .site-footer p {
