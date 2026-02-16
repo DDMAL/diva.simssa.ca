@@ -13,7 +13,7 @@ Include the OpenSeadragon and Diva.js script in your HTML:
 <script src="path/to/diva.js"></script>
 ```
 
-All of the viewer CSS and images are included in the bundle, so there is nothing else to load.
+All CSS and images are included in the bundle, so there is nothing else to load.
 
 ## Basic Usage
 
@@ -58,6 +58,10 @@ const viewer = new Diva(rootElementId, options);
 | `showTitle`     | `boolean`  | `true`     | Whether to show the manifest title                    |
 | `setLanguage`   | `string`   | `null`     | Override the auto-detected language with a set value. |
 
+
+`setLanguage` is evaluated against the browser ["Navigator language"](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language) property
+and should match the language subtag component of the [BCP-47 string](https://developer.mozilla.org/en-US/docs/Glossary/BCP_47_language_tag). Thus
+for `ar-Latn`, use `ar`; for `fr-CA` use `fr`, etc.
 
 ## IIIF Support
 
