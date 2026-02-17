@@ -4,13 +4,11 @@ description: "A short history of Diva.js (2008–2019)"
 weight: 1
 ---
 
-(Adapted and expanded from the [Code4Lib article](https://journal.code4lib.org/articles/5418) on Diva.js.)
-
 The Diva.js project began in 2008 as a collaboration between the Swiss working group of the Répertoire International des Sources Musicales (RISM) and the Distributed Digital Music Archives and Libraries lab at McGill University in Montréal. The Swiss working group had received funding for an exploratory effort to digitize musical sources (prints and manuscripts) by Swiss composers held in libraries and monasteries across Switzerland.
 
-At the start of the project, we looked at the existing tools and interfaces for displaying digitized document images in a web browser. To assess the state of the art, we surveyed 24 digital libraries and defined a set of functional requirements for a viewer designed specifically for musical sources.
+At the start of the project, we looked at the existing tools and interfaces for displaying digitized document images in a web browser. To assess the state of the art, and to see if we needed to make something or if we could borrow from others, we surveyed 24 digital libraries.  We looked at projects like Google Books, that featured a great UI for scrolling through digitized books, but only offered a couple zoom levels and certainly nothing for high-resolution images. We looked at the World Digital Library, that had a great zooming interface but navigating between pages was cumbersome as you had to wait for each image to load. [Zoomify](https://web.archive.org/web/20080111224134/http://www.zoomify.com/) was a thing but it required Flash and had quite a complicated setup. At the same time we were inspired by the single-image demos from the IIP Image Server and the "IIP Moo Viewer". "AJAX" was still relatively new, so on-the-fly image loading techniques were not widely adopted.
 
-The survey showed that no open-source tool at the time provided the interface we needed. So we decided to build one.
+All the pieces were there for a high-resolution, scrolling, PDF-like document viewing experience, but nobody seemed to have one. So we decided to build our own. From our survey we defined five functional requirements for our new viewer; you can read about them in our [Code4Lib article](https://journal.code4lib.org/articles/5418). 
 
 ## Towards Diva.js
 
@@ -32,7 +30,7 @@ Development on the jQuery plugin began in February 2011, using the same design r
 
 ## How Diva.js Worked (Pre-IIIF)
 
-There were two back-end components, and a front-end viewer. The image server (we used IIP Image Server) was responsible for delivering tiled images using the Internet Image Protocol. The data server was responsible for sending a JSON document to the image viewer. Those who are familiar with the IIIF Manifest, it was a similar concept, although it contained much more information about the image sizes, zoom levels, and tile sizes. 
+The Diva.js setup involved were two back-end components, and a front-end viewer. The image server (we used IIP Image Server) was responsible for delivering tiled images using the Internet Image Protocol. The data server was responsible for sending a JSON document to the image viewer. For those who are familiar with the IIIF Manifest, it was a similar concept, although it contained much more information about the image sizes, zoom levels, and tile sizes, and less about the structure of the book itself. Any metadata or other information would need to be fetched separately. 
 
 The front-end viewer used the JSON data, provided as an HTTP URL. It would use the data to build a page in the browser that was optimized for viewing large documents. The viewer would "lazy load" the pages and the tiles, requesting only the parts of the document that were currently being viewed by the user. Users could "zoom" in and out from the images, viewing high-resolution images without needing to first download large image files.
 

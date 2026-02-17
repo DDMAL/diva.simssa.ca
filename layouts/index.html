@@ -14,23 +14,60 @@
 <section class="features">
   <div class="container">
     <h1>Features</h1>
-    <div class="feature-grid">
-      <div class="feature">
-        <h3>IIIF Support</h3>
-        <p>Support for IIIF Presentation API v2 and v3, including collections, manifests, and ranges.</p>
-      </div>
-      <div class="feature">
-        <h3>Document Image Processing</h3>
-        <p>Advanced image filters designed to assist with difficult-to-read historical documents.</p>
-      </div>
-      <div class="feature">
-        <h3>Page View</h3>
-        <p>Detailed page view with multiple viewing modes, two-up spreads, and comprehensive filter controls.</p>
-      </div>
-      <div class="feature">
-        <h3>Responsive Design</h3>
-        <p>Mobile-friendly interface with touch support and responsive layouts.</p>
-      </div>
+    <p class="features-note">Hover your mouse over the videos to see Diva.js in action.</p>
+    <div class="feature-showcase">
+      <article class="feature-row">
+        <figure class="feature-video-wrap">
+          <video class="feature-video" muted loop playsinline preload="metadata" poster="/videos/web/quickly-navigate-poster.jpg">
+            <source src="/videos/web/quickly-navigate.webm" type="video/webm">
+            <source src="/videos/web/quickly-navigate.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </figure>
+        <div class="feature-copy">
+          <h3>Navigate documents quickly... or slowly</h3>
+          <p>Diva.js features several ways of navigating document images, either quickly to get to the page you are interested in, or slowly to zoom in on the fine details.
+
+            Bern, Burgerbibliothek, Cod. 9, https://www.e-codices.unifr.ch/metadata/iiif/bbb-0009/manifest.json</p>
+        </div>
+      </article>
+      <article class="feature-row feature-row-staggered">
+        <figure class="feature-video-wrap">
+          <video class="feature-video" muted loop playsinline preload="metadata" poster="/videos/web/shift-page-feature-poster.jpg">
+            <source src="/videos/web/shift-page-feature.webm" type="video/webm">
+            <source src="/videos/web/shift-page-feature.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </figure>
+        <div class="feature-copy">
+          <h3>Enhanced readability</h3>
+          <p>"Shift page" makes openings line up, providing a smoother reading experience. </p>
+        </div>
+      </article>
+      <article class="feature-row">
+        <figure class="feature-video-wrap">
+          <video class="feature-video" muted loop playsinline preload="metadata" poster="/videos/web/advanced-image-filters-poster.jpg">
+            <source src="/videos/web/advanced-image-filters.webm" type="video/webm">
+            <source src="/videos/web/advanced-image-filters.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </figure>
+        <div class="feature-copy">
+          <h3>Advanced image filters</h3>
+          <p>A full suite of image filters is available, providing new methods for seeing what is written on the page...or underneath it. And if you find some settings that work, you can export them and re-apply them on other pages.</p>
+        </div>
+      </article>
+    </div>
+    <div class="feature-grid-4x4">
+      <article class="feature-mini">
+        <div class="feature-mini-image-slot">
+          <img class="feature-mini-image" src="/images/iiif.svg" alt="IIIF logo">
+        </div>
+        <h4>IIIF Support</h4>
+        <p>Support for both IIIF v2 and v3, Presentation and Image APIs</p>
+      </article>
+      <article class="feature-mini"><div class="feature-mini-image-slot"><img class="feature-mini-image" src="/images/integrated-collection-browser.jpg" alt="Integrated collection browser"></div><h4>Integrated collection browser</h4><p>Browse collections and load manifests from an integrated collection browsing sidebar.</p></article>
+      <article class="feature-mini"><div class="feature-mini-image-slot"><img class="feature-mini-image" src="/images/metadata-with-html.jpg" alt="Metadata with HTML"></div><h4>Metadata and range support</h4><p>Support for HTML in metadata, and navigation using IIIF ranges.</p></article>
     </div>
   </div>
 </section>
@@ -42,4 +79,27 @@
     <a href="/try" class="btn btn-primary">Try it out!</a>
   </div>
 </section>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var videos = document.querySelectorAll(".feature-video");
+
+    videos.forEach(function (video) {
+      function playVideo() {
+        var playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(function () {});
+        }
+      }
+
+      function stopVideo() {
+        video.pause();
+        video.currentTime = 0;
+      }
+
+      video.addEventListener("mouseenter", playVideo);
+      video.addEventListener("mouseleave", stopVideo);
+    });
+  });
+</script>
 {{ end }}

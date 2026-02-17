@@ -50,6 +50,7 @@ Prerequisites:
 - Elm (for building the Elm source)
 - elm-format (for code formatting)
 - elm-review (for checking the Elm coding style)
+- clang-format (for TypeScript formatting)
 
 Install dependencies:
 
@@ -107,6 +108,8 @@ There is an elm-review configuration, which should be checked for any violations
 ```bash
 elm-review
 ```
+
+## Releases
 
 Release builds will build both the production and debug versions, as well as build tar.gz and zip files for GitHub.
 
