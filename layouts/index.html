@@ -80,11 +80,11 @@
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    var videos = document.querySelectorAll(".feature-video");
+    let videos = document.querySelectorAll(".feature-video");
 
     videos.forEach(function (video) {
       function playVideo() {
-        var playPromise = video.play();
+        let playPromise = video.play();
         if (playPromise && typeof playPromise.catch === "function") {
           playPromise.catch(function () {});
         }
