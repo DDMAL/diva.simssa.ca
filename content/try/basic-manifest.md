@@ -3,7 +3,7 @@ title: "Basic Manifest"
 description: "A simple example loading a single IIIF manifest"
 weight: 1
 layout: "basic-manifest"
-manifest: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/ae9f6cca-ae5c-4149-8fe4-95e6eca1f73c.json"
+manifest: "https://www.e-codices.unifr.ch/metadata/iiif/csg-0390/manifest.json"
 divaScript: "/js/diva.js"
 viewerHeight: "70vh"
 ---
