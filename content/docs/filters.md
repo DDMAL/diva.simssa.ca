@@ -52,15 +52,15 @@ If you find a particular set of filter settings that you find useful, the "Impor
 
 - **Morph**: Applies an erosion or dilation operation. Erode shrinks bright regions and can remove small bright specks; dilate expands bright regions and can fill small gaps.
 - **Operation**: Choose `erode` or `dilate` to control the direction of the effect.
-- **Kernel**: Size of the morphology kernel. Larger kernels have a stronger, more global impact.
+- **Kernel**: Size of the morphology kernel (`3x3`, `5x5`, or `7x7`). Larger kernels have a stronger, more global impact.
 
 ## Convolution
 
-- **Kernel**: Applies a convolution preset (e.g., sharpen, blur). Convolution remaps each pixel based on its neighbours, which is useful for edge enhancement or smoothing.
+- **Kernel**: Applies a convolution preset (`sharpen`, `blur`, `edge`, or `emboss`). Convolution remaps each pixel based on its neighbours, which is useful for edge enhancement or smoothing.
 
 ## Colourmap
 
-- **Preset**: Maps luminance values to a fixed colour palette. This treats the image as intensity and assigns colours based on brightness.
+- **Preset**: Maps luminance values to a fixed colour palette (`gray`, `hot`, or `cool`). This treats the image as intensity and assigns colours based on brightness.
 - **Center**: Shifts the palette midpoint. This can emphasize darker or lighter details by moving where the palette “midpoint” lands.
 
 ## Pseudo‑Colour
@@ -68,17 +68,18 @@ If you find a particular set of filter settings that you find useful, the "Impor
 Pseudo-Colour filters are provided to try and separate colours on an image into a wider difference. This helps to target, for example, an under-text and an over-text so that they can be boosted or cut, making it easier to read faint or overwritten text. 
 
 - **Mode**: False‑colour mapping derived from RGB relationships (e.g. Red–Green diff, Luma, CMY, Heat). These modes are designed to emphasize differences between channels or map luminance into a synthetic palette.
-- **Red / Green / Blue Weights**: Scales channel influence for applicable modes. Increasing a weight makes that channel contribute more strongly to the mapping.
+- **Red / Green / Blue Weights**: Scales channel influence for applicable modes (`0` to `2`). Increasing a weight makes that channel contribute more strongly to the mapping.
 - **Replace Colour**: Replaces a selected source colour with a target colour. This runs after the pseudo‑colour mapping.
-- **Tolerance**: How close a pixel must be to the source colour to be replaced. Higher tolerance will replace a broader range of similar colours.
-- **Strength**: Blend amount for the replacement. Lower values blend the replacement with the original colour.
+- **Tolerance**: How close a pixel must be to the source colour to be replaced (`0` to `255`). Higher tolerance will replace a broader range of similar colours.
+- **Strength**: Blend amount for the replacement (`0` to `1`). Lower values blend the replacement with the original colour.
 - **Preserve Luminance**: Keeps the original luminance while changing the colour, so brightness stays consistent.
 
-## Principal Component Analysis (PCA)
+## Visible Area PCA
 
-Because of an implementation detail, PCA is run on the individual tiles on an image rather than on the image as a whole. This can lead to images looking like a patchwork with this filter applied
+Visible Area PCA computes PCA-based colour transforms over the currently visible area. As more pixels are sampled while viewing/zooming/panning, the PCA basis can stabilize and slightly change the rendering.
 
-- **Mode**: Applies PCA colour transforms (RGB PCA or individual components). This is computed per tile and can highlight subtle colour structure by re‑projecting the RGB channels into principal components.
+- **Mode**: Applies PCA colour transforms (`PCA (RGB)`, `PCA Component 1`, `PCA Component 2`, `PCA Component 3`) to highlight subtle colour structure.
+- **Hue Rotation**: Rotates PCA output hue (`-180°` to `180°`) to help separate features in alternate colour presentations.
 
 ## Advanced Colour Adjust
 
@@ -93,5 +94,14 @@ These are channel‑specific adjustments.
 ## Enhancement
 
 - **Background Normalize**: Flattens uneven background intensity by estimating and removing slow background variation.
-- **Unsharp Mask**: Sharpens edges by subtracting a blurred version from the original and boosting the difference.
+- **Unsharp Mask**: Sharpens edges by subtracting a blurred version from the original and boosting the difference (`0` to `3`).
 - **Adaptive Threshold**: Thresholding based on local neighbourhood statistics, which is useful when lighting varies across the page.
+    - **Window**: Neighbourhood window size (`3` to `51`, odd numbers only).
+    - **Offset**: Bias applied to the local threshold (`-50` to `50`).
+
+# Notes
+
+- **Filter order**: filters are applied in this sequence: basic tone/colour adjustments, morphology, convolution, colourmap, pseudo-colour, visible area PCA, replace colour, advanced colour adjustments, then adaptive threshold.
+- **Import / Export Filter Settings JSON**:
+    - **Show JSON** exports only currently active filters.
+    - **Apply** starts from default settings and applies only the keys present in the JSON (omitted keys revert to defaults/off).
