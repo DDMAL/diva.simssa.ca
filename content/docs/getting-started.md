@@ -9,7 +9,7 @@ weight: 1
 Include the OpenSeadragon and Diva.js script in your HTML:
 
 ```html
-<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/openseadragon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.1/build/openseadragon/openseadragon.min.js"></script>
 <script src="path/to/diva.js"></script>
 ```
 
