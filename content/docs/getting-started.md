@@ -15,6 +15,30 @@ Include the OpenSeadragon and Diva.js script in your HTML:
 
 All CSS and images are included in the bundle, so there is nothing else to load.
 
+### Using a bundler (ESM)
+
+The package also ships an ESM build with a named `Diva` export:
+
+```js
+import { Diva } from 'diva.js';
+```
+
+OpenSeadragon is a **peer dependency** — Diva.js does not bundle it, and reads it
+from the `window.OpenSeadragon` global when the viewer initialises. With the
+`<script>` tag above that global is set for you, but the npm `openseadragon`
+package, when imported through a bundler or import map, assigns to its module
+export and does **not** set the global. In that case expose it yourself before
+constructing the viewer, otherwise the viewer renders nothing:
+
+```js
+import { Diva } from 'diva.js';
+import OpenSeadragon from 'openseadragon';
+
+window.OpenSeadragon ||= OpenSeadragon; // Diva reads OpenSeadragon from this global
+
+new Diva('diva-wrapper', { objectData: 'https://example.org/manifest.json' });
+```
+
 ## Basic Usage
 
 To embed Diva.js in your page, create a container element and initialise the viewer:
