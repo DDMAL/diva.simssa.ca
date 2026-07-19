@@ -1,7 +1,7 @@
 ---
 title: "Developing"
 description: "Diva.js internals and how it's built"
-weight: 4
+weight: 5
 ---
 
 Diva.js is built from two main pieces: an Elm application that manages state and UI, and a TypeScript layer that provides the custom OpenSeadragon viewer element, the filter implementations, and bridges Elm ports to the browser.
@@ -120,5 +120,4 @@ The standard public release is published to npm by the tagged GitHub Actions wor
 ```bash
 make release
 ```
-
 

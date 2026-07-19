@@ -1,7 +1,7 @@
 ---
 title: "Filters"
 description: "Descriptions of the filters available in Page View"
-weight: 5
+weight: 6
 ---
 
 This page lists the filters available in Page View and what they do. The filters are provided to help with reading images that may require some processing to make legible. Simple examples might be the use of the Mirror filter to read bleed-through text, or the Rotation filter to more easily read text written in different orientations on the page.
