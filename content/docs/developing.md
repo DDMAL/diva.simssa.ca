@@ -10,6 +10,8 @@ Diva.js is built from two main pieces: an Elm application that manages state and
 
 - **Elm UI and state**: The core UI, layout, and IIIF manifest parsing live in Elm. It handles view state (scrolling layout, page view, sidebars, contents, metadata) and sends commands to the viewer through ports.
 - **TypeScript glue**: `src/diva.ts` initializes the Elm app, wires ports, injects styles, and manages the OpenSeadragon instance in Page View.
+- **Public API**: `src/public-api.ts` defines the supported state, page, event, option, and navigation types exported by the browser and ES module builds.
+- **Authorization**: `src/auth.ts` coordinates IIIF Authorization Flow API 2.0 access-token and logout behavior with the Elm application.
 - **OpenSeadragon**: The custom element `src/viewer-element.ts` wraps OpenSeadragon and implements the scrolling and multi-page. Elm signals page and layout changes; the element reports back the zoom and page changes.
 - **Filters pipeline**: Filters are defined in Elm for the UI and in TypeScript for applying them to the OpenSeadragon tiles. Page View provides a filtered, zoomable image with export capability.
 
@@ -19,6 +21,8 @@ Key source files:
 - `src/View/*.elm`: UI for the main viewer, sidebars, and modals.
 - `src/viewer-element.ts`: the `osd-viewer` custom element and scroll layout logic.
 - `src/diva.ts`: Elm/TS integration and viewer wiring.
+- `src/public-api.ts`: public TypeScript types and integration contract.
+- `src/auth.ts`: IIIF Authorization Flow API 2.0 client behavior.
 - `src/filters.ts`: filter application and configuration helpers.
 
 ## Key Technologies
@@ -68,7 +72,7 @@ The production bundle can be built with Make.
 make clean && make build
 ```
 
-This command will create the `build/diva.js` file, which is minified and stripped of any debugging information.
+This command creates the browser build, ES module build, and TypeScript declarations under `build/`.
 
 We also ship a debug build that can help track down integration problems. 
 
@@ -111,11 +115,10 @@ elm-review
 
 ## Releases
 
-Release builds will build both the production and debug versions, as well as build tar.gz and zip files for GitHub.
+The standard public release is published to npm by the tagged GitHub Actions workflow. See `RELEASE.md` in the Diva.js repository for the current release checklist. Local archive builds remain available with:
 
 ```bash
 make release
 ```
-
 
 

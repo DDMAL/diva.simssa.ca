@@ -145,7 +145,7 @@
     <div id="diva-wrapper"></div>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.1/build/openseadragon/openseadragon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.2/build/openseadragon/openseadragon.min.js"></script>
 <script src="/js/diva.js"></script>
 <script>
     (function ()
@@ -258,12 +258,13 @@
 
             const acceptHeaders = resolveAcceptHeaders();
             const viewerEl = document.getElementById("diva-wrapper");
-            viewerEl.innerHTML = "";
 
             if (viewer && typeof viewer.destroy === "function")
             {
                 viewer.destroy();
             }
+
+            viewerEl.innerHTML = "";
 
             const options = {
                 objectData: manifestUrl,
@@ -278,6 +279,32 @@
             }
 
             viewer = new Diva("diva-wrapper", options);
+
+            const activeViewer = viewer;
+            viewer.addEventListener("ready", function ()
+            {
+                if (viewer !== activeViewer)
+                {
+                    return;
+                }
+
+                const pageCount = activeViewer.getPages().length;
+                setStatus("Loaded " + pageCount + " page" + (pageCount === 1 ? "" : "s") + ".");
+            }, { once: true });
+
+            viewer.addEventListener("error", function (event)
+            {
+                if (viewer !== activeViewer)
+                {
+                    return;
+                }
+
+                const detail = event.detail || {};
+                const message = detail.error && detail.error.message
+                    ? detail.error.message
+                    : "The resource could not be loaded.";
+                setStatus("Error: " + message);
+            });
 
             setStatus("Loading " + manifestUrl);
         }

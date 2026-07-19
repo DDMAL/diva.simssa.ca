@@ -3,11 +3,21 @@
   <h1>{{ .Title }}</h1>
   {{ .Content }}
   <ul class="page-list">
+    {{ $apiReference := .Params.apiReference }}
     {{ range .Pages }}
+    {{ $page := . }}
     <li>
       <a href="{{ .RelPermalink }}">{{ .Title }}</a>
       {{ with .Description }}<p>{{ . }}</p>{{ end }}
     </li>
+    {{ with $apiReference }}
+      {{ if eq $page.RelPermalink .after }}
+    <li>
+      <a href="{{ .url }}">{{ .title }}</a>
+      <p>{{ .description }}</p>
+    </li>
+      {{ end }}
+    {{ end }}
     {{ end }}
   </ul>
 </div>

@@ -12,3 +12,5 @@ Thumbs.db
 cache
 elm-stuff
 node_modules
+static/docs/api/
+sources/videos/*.mov

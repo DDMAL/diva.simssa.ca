@@ -1,46 +1,71 @@
 ---
 title: "Getting Started"
 description: "How to set up Diva.js in your project"
-weight: 1
+weight: 2
 ---
 
-## Including the required libraries
+## Install Diva.js
 
-Include the OpenSeadragon and Diva.js script in your HTML:
+Diva.js requires OpenSeadragon. You can load both browser bundles directly:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.1/build/openseadragon/openseadragon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.2/build/openseadragon/openseadragon.min.js"></script>
 <script src="path/to/diva.js"></script>
 ```
 
-All CSS and images are included in the bundle, so there is nothing else to load.
+All Diva.js CSS and images are included in its bundle, so there is nothing else to load.
 
-## Basic Usage
+For an application built with npm:
 
-To embed Diva.js in your page, create a container element and initialise the viewer:
+```bash
+npm install diva.js openseadragon
+```
+
+The package includes browser and ES module builds plus TypeScript declarations. OpenSeadragon must be available globally before a viewer is created:
+
+```javascript
+import OpenSeadragon from "openseadragon";
+import Diva from "diva.js";
+
+globalThis.OpenSeadragon = OpenSeadragon;
+```
+
+## Create a Viewer
+
+Add a container and create a viewer with a IIIF manifest or collection URL:
 
 ```html
 <div id="diva-wrapper"></div>
 
 <script>
-  const viewer = new Diva('diva-wrapper', {
-    objectData: 'https://example.org/manifest.json'
+  const viewer = new Diva("diva-wrapper", {
+    objectData: "https://example.org/manifest.json"
   });
 </script>
 ```
 
-You should also ensure you have a style for the container you are using, e.g.,:
+Give the container an explicit height so the viewer can render correctly:
 
 ```css
 #diva-wrapper {
-    display: flex;
-    height: 80vh;
-    width: 100%;
+  display: flex;
+  width: 100%;
+  height: 80vh;
 }
 ```
 
-The exact contents will vary depending on your specific embedding requirements.
+Wait for the initial IIIF resource before reading page state or issuing commands:
 
+```javascript
+await viewer.ready;
+
+const pages = viewer.getPages();
+const currentPage = viewer.getCurrentPage();
+
+await viewer.next();
+```
+
+See the [API reference](/docs/api/) for navigation, state, events, resource replacement, region zooming, and lifecycle methods.
 
 ## Configuration Options
 
@@ -50,24 +75,39 @@ The `Diva` constructor accepts a root element ID and an options object:
 const viewer = new Diva(rootElementId, options);
 ```
 
-| Option          | Type       | Default    | Description                                           |
-|-----------------|------------|------------|-------------------------------------------------------|
-| `objectData`    | `string`   | (required) | URL to a IIIF manifest or collection                  |
-| `acceptHeaders` | `string[]` | `[]`       | Additional Accept headers for requests                |
-| `showSidebar`   | `boolean`  | `true`     | Whether to show the sidebar by default                |
-| `showTitle`     | `boolean`  | `true`     | Whether to show the manifest title                    |
-| `setLanguage`   | `string`   | `null`     | Override the auto-detected language with a set value. |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `objectData` | `string` | required | URL to a IIIF manifest or collection |
+| `initialPage` | `number \| DivaPageSelector` | `0` | Initial zero-based page index, exact canvas ID, or complete case-insensitive label |
+| `acceptHeaders` | `string[]` | `[]` | Preferred HTTP Accept values for IIIF resource requests |
+| `showSidebar` | `boolean` | `true` | Whether to show the navigation sidebar |
+| `sidebarWidth` | `number` | `320` | Initial sidebar width, constrained to 220–520 CSS pixels |
+| `sidebarPanel` | `"thumbnails" \| "contents" \| "metadata"` | `"thumbnails"` | Initially selected available sidebar panel |
+| `showTitle` | `boolean` | `true` | Whether to show the resource title |
+| `setLanguage` | `string` | browser language | Preferred interface language |
 
+Page selectors use either an exact canvas identifier or a complete localized label:
 
-`setLanguage` is evaluated against the browser ["Navigator language"](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language) property
-and should match the language subtag component of the [BCP-47 string](https://developer.mozilla.org/en-US/docs/Glossary/BCP_47_language_tag). Thus
-for `ar-Latn`, use `ar`; for `fr-CA` use `fr`, etc.
+```javascript
+const viewer = new Diva("diva-wrapper", {
+  objectData: manifestUrl,
+  initialPage: { by: "label", value: "Folio 12r" },
+  sidebarPanel: "contents",
+  sidebarWidth: 360
+});
+```
 
-## IIIF Support
+`setLanguage` should normally be the language subtag of a [BCP 47 language tag](https://developer.mozilla.org/en-US/docs/Glossary/BCP_47_language_tag). For example, use `ar` for `ar-Latn` and `fr` for `fr-CA`.
 
-Diva.js supports both IIIF Presentation API v2 and v3:
+## IIIF and Image Access
 
-- **Manifests**: Full support for viewing manifests with canvases and annotations
-- **Collections**: Browse and navigate collection hierarchies
-- **Ranges**: Table of contents navigation via ranges/structures
-- **Multiple images per canvas**: View and switch between multiple images on a single canvas
+Diva.js supports:
+
+- IIIF Presentation API 2 and 3 manifests, collections, ranges, and multiple images per canvas.
+- IIIF Image API 1, 2, and 3 services.
+- Static image resources when the image server permits cross-origin canvas access.
+- The IIIF Authorization Flow API 2.0 `active` access profile, including optional logout services.
+
+Static images and tiles must return an appropriate CORS header. Diva.js intentionally does not use a non-CORS fallback because its image-processing tools require canvas access.
+
+Authorization API 2.0 `kiosk` and `external` profiles, Authentication API 1.0, substitutes, and tiered access are not currently supported.

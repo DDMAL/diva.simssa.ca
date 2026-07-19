@@ -1,0 +1,24 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "Diva.js Public API",
+  "includeVersion": true,
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "excludeExternals": true,
+  "externalPattern": [],
+  "requiredToBeDocumented": ["Class", "Constructor", "Interface", "Method", "Property", "TypeAlias"],
+  "validation": {
+    "invalidLink": true,
+    "notDocumented": true,
+    "notExported": true
+  },
+  "treatValidationWarningsAsErrors": true,
+  "sort": ["source-order"],
+  "customCss": "../static/css/api-docs.css",
+  "navigationLinks": {
+    "Guides": "/docs/",
+    "Diva.js": "/"
+  }
+}

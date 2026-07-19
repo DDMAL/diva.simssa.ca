@@ -1,5 +1,5 @@
 baseURL = "https://diva.simssa.ca/"
-languageCode = "en-gb"
+locale = "en-gb"
 title = "Diva.js"
 
 [params]

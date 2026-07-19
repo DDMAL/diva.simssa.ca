@@ -1,0 +1,13 @@
+{
+  "name": "diva-simssa-ca",
+  "private": true,
+  "scripts": {
+    "docs:api": "typedoc --options config/typedoc.json --entryPoints node_modules/diva.js/build/diva-esm.d.ts --tsconfig config/tsconfig.api.json --out public/docs/api",
+    "docs:api:local": "../diva.js/node_modules/.bin/typedoc --options config/typedoc.json --entryPoints ../diva.js/src/diva-esm.ts --tsconfig ../diva.js/tsconfig.json --out static/docs/api"
+  },
+  "devDependencies": {
+    "diva.js": "7.4.0",
+    "typedoc": "0.28.20",
+    "typescript": "5.9.3"
+  }
+}
