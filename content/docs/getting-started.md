@@ -9,7 +9,7 @@ weight: 2
 Diva.js requires OpenSeadragon. You can load both browser bundles directly:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.0.2/build/openseadragon/openseadragon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.1.0/build/openseadragon/openseadragon.min.js"></script>
 <script src="path/to/diva.js"></script>
 ```
 

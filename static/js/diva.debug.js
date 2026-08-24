@@ -10,9 +10,10 @@
     constructor() {
       super(...arguments);
       this.image = null;
+      this.unavailable = null;
     }
     static get observedAttributes() {
-      return ["data-src", "data-alt", "data-crossorigin"];
+      return ["data-src", "data-fallback-src", "data-alt", "data-crossorigin"];
     }
     connectedCallback() {
       this.observe();
@@ -21,10 +22,7 @@
       lazyImageObserver == null ? void 0 : lazyImageObserver.unobserve(this);
     }
     attributeChangedCallback() {
-      if (this.image) {
-        this.image.remove();
-        this.image = null;
-      }
+      this.reset();
       if (this.isConnected) {
         this.observe();
       }
@@ -40,15 +38,46 @@
       }
       lazyImageObserver == null ? void 0 : lazyImageObserver.unobserve(this);
       const image = document.createElement("img");
-      image.className = "thumbs-image";
+      image.className = "diva-thumbs-image";
       image.alt = (_a = this.dataset.alt) != null ? _a : "";
       const crossOrigin = this.dataset.crossorigin;
+      const isAnonymous = crossOrigin === "anonymous";
+      this.image = image;
+      this.appendChild(image);
+      this.loadImage(image, url, isAnonymous ? void 0 : crossOrigin, isAnonymous, false);
+    }
+    loadImage(image, url, crossOrigin, canUseFallback, usedFallback) {
+      image.removeAttribute("crossorigin");
       if (crossOrigin) {
         image.crossOrigin = crossOrigin;
       }
-      this.image = image;
-      this.appendChild(image);
+      image.onerror = () => {
+        const fallbackUrl = this.dataset.fallbackSrc;
+        if (canUseFallback && !usedFallback && fallbackUrl && fallbackUrl !== url) {
+          this.loadImage(image, fallbackUrl, void 0, true, true);
+          return;
+        }
+        this.showUnavailable();
+      };
+      image.removeAttribute("src");
       image.src = url;
+    }
+    reset() {
+      var _a, _b;
+      (_a = this.image) == null ? void 0 : _a.remove();
+      this.image = null;
+      (_b = this.unavailable) == null ? void 0 : _b.remove();
+      this.unavailable = null;
+    }
+    showUnavailable() {
+      var _a;
+      (_a = this.image) == null ? void 0 : _a.remove();
+      this.image = null;
+      const unavailable = document.createElement("div");
+      unavailable.className = "diva-thumbs-image diva-thumbs-image--unavailable";
+      unavailable.setAttribute("aria-label", "Thumbnail unavailable");
+      this.unavailable = unavailable;
+      this.appendChild(unavailable);
     }
     observe() {
       if (!("IntersectionObserver" in window)) {
@@ -96,7 +125,6 @@
       this.resourceId = "initial";
       this.scrollPlaneItem = null;
       this.isViewportInitialized = false;
-      this.pendingRestoredViewState = null;
       this.lastReportedIndex = null;
       this.lastReportedZoom = null;
       this.loadingTimer = null;
@@ -225,39 +253,6 @@
     }
     setTileSourceResolver(resolver) {
       this.tileSourceResolver = resolver;
-    }
-    getViewState() {
-      var _a;
-      const viewport = (_a = this.viewer) == null ? void 0 : _a.viewport;
-      if (!viewport || !this.isViewportInitialized) {
-        return null;
-      }
-      const center = viewport.getCenter(true);
-      return { centerX: center.x, centerY: center.y, zoom: viewport.getZoom(true) };
-    }
-    isResourcePageLoaded(resourceId, index, sourceId) {
-      return this.resourceId === resourceId && this.isPageLoaded(index, sourceId);
-    }
-    restoreViewState(state, resourceId) {
-      if (!state) {
-        return;
-      }
-      this.pendingRestoredViewState = { resourceId, state };
-      this.applyRestoredViewState();
-    }
-    applyRestoredViewState() {
-      var _a;
-      const pending = this.pendingRestoredViewState;
-      const viewport = (_a = this.viewer) == null ? void 0 : _a.viewport;
-      if (!pending || pending.resourceId !== this.resourceId || !viewport || !this.isViewportInitialized) {
-        return;
-      }
-      const state = pending.state;
-      const center = new OpenSeadragon.Point(state.centerX, state.centerY);
-      viewport.zoomTo(state.zoom, center, true);
-      viewport.panTo(center, true);
-      viewport.applyConstraints();
-      this.pendingRestoredViewState = null;
     }
     invalidateTileSources(sourceIds) {
       var _a;
@@ -447,7 +442,6 @@
             this.recenterAfterFit();
             this.flushInitialPageChange();
             this.flushInitialZoomChange();
-            this.applyRestoredViewState();
           }
           this.emitCustomEvent("diva-page-loaded", { index, resourceId: this.resourceId });
           if (this.targetIndex === index) {
@@ -1305,7 +1299,7 @@
   customElements.define("osd-viewer", OsdViewer);
 
   // cache/diva.css
-  var diva_default = ":root{--diva-accent:#5a6bff;--diva-accent-light:#9aa4ff;--diva-border:#d9d4ce;--diva-danger:#d32f2f;--diva-dark-bg:#1c1d22;--diva-dark-border:#2c2d33;--diva-overlay-bg:#10111499;--diva-page-bg:#f7f5f1;--diva-shadow-dark:#00000026;--diva-shadow-focus:#9aa4ff59;--diva-shadow-modal:#00000040;--diva-surface:#e6e1dc;--diva-text-muted:#5c5a55;--diva-text-muted-on-dark:#ffffffb3;--diva-text-primary:#1b1b1b;--diva-toolbar-button-bg:#5258626b;--diva-toolbar-button-bg-hover:#5c636e85;--diva-toolbar-button-bg-fullscreen:#52586285;--diva-toolbar-button-bg-fullscreen-hover:#6068749e;--diva-toolbar-button-border:#ffffff59;--diva-toolbar-button-border-hover:#ffffff73;--diva-toolbar-button-border-fullscreen-hover:#fff9;--diva-toolbar-button-icon:#2c2d33;--diva-toolbar-button-shadow:inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #ffffff2e;--diva-toolbar-button-shadow-hover:inset 0 1px 0 #ffffffb3, inset 0 -1px 0 #ffffff3d;--diva-white:#fff;--diva-font-lg:16px;--diva-font-md:13px;--diva-font-sm:11px;--diva-font-xs:10px;--diva-font-xl:20px;color-scheme:light}*{box-sizing:border-box}.list-reset{margin:0;padding:0;list-style:none}.ui-button{text-align:left;cursor:pointer;color:var(--diva-text-primary);font-size:var(--diva-font-lg);background-color:#0000;border:none;padding:0}.ui-button:hover{background-color:var(--diva-surface)}.ui-card{cursor:pointer;border-radius:0;width:100%;padding:6px}.ui-card--dark{background-color:var(--diva-dark-bg)}.diva-app{flex-direction:column;flex:1;height:100%;min-height:0;padding:12px 24px;display:flex}.diva-app.is-fullscreen{height:100vh;min-height:100vh;padding:0}.diva-app-header{font-size:var(--diva-font-lg);align-items:center;gap:12px;margin-bottom:8px;font-weight:600;display:flex}.diva-app-title{font-size:var(--diva-font-xl);text-align:left;color:var(--diva-text-primary);margin-bottom:6px;font-weight:600}.diva-app-title.is-fullscreen{color:var(--diva-white)}.diva-app-body{flex:1;align-items:stretch;gap:0;height:100%;min-height:0;display:flex;position:relative}.diva-app-body.is-fullscreen{flex:1;min-height:0}.diva-canvas-column{flex-direction:column;flex:1;gap:24px;min-height:0;display:flex}.diva-canvas-column.is-fullscreen{flex:1;height:100%;min-height:0}.diva-canvas-wrapper{flex:1;min-height:0;position:relative}.diva-canvas{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);border-radius:0;width:100%;height:100%;overflow:hidden}.diva-canvas.is-fullscreen{border-radius:0;flex:1;height:100%}.diva-canvas.has-collection{border-radius:0}.metadata-panel{height:100%;padding:12px;overflow:auto}.metadata-body{flex-direction:column;gap:10px;display:flex}.metadata-item{flex-direction:column;gap:0;display:flex}.metadata-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;line-height:1.3}.metadata-value{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px;line-height:1.3}.metadata-value>:first-child{margin-top:0}.metadata-value>:last-child{margin-bottom:0}.contents-empty{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px}.sidebar-resizer,.collection-resizer{width:12px;font-size:var(--diva-font-xl);color:var(--diva-white);background-color:var(--diva-text-muted);cursor:ew-resize;user-select:none;touch-action:none;flex:0 0 12px;justify-content:center;align-self:stretch;align-items:center;line-height:1;display:flex}.sidebar-resizer.is-hidden,.collection-resizer.is-hidden{display:none}.sidebar-panel.is-fullscreen,.collection-panel.is-fullscreen{border-radius:0;height:100%}.sidebar-panel.is-hidden,.collection-panel.is-hidden{opacity:0;pointer-events:none;border-width:0;padding:0;overflow:hidden}.required-statement-dock{justify-content:flex-end;width:100%;margin-top:12px;padding-right:8px;display:flex}.required-statement{font-size:var(--diva-font-md);color:var(--diva-text-muted);text-align:right;min-width:250px;max-width:20vw;line-height:1.4}.diva-scrollbar-track{background:var(--diva-surface);border:1px solid var(--diva-border);z-index:100;border-radius:0;width:12px;position:absolute;top:4px;bottom:4px;right:4px}.diva-scrollbar-thumb{background:var(--diva-text-muted);cursor:pointer;border-radius:0;min-height:30px;position:absolute;left:1px;right:1px}.diva-scrollbar-thumb:hover{background:var(--diva-text-primary)}.diva-scrollbar-thumb:active{background:var(--diva-dark-border)}.throbber-overlay{pointer-events:none;justify-content:center;align-items:center;display:flex;position:absolute;inset:0}.viewer-zoom-indicator{z-index:30;pointer-events:none;font-size:var(--diva-font-sm);color:var(--diva-white);background-color:#0000008c;border-radius:0;padding:4px 8px;font-weight:600;position:absolute;bottom:12px;left:12px}.throbber{background-color:var(--diva-white);width:64px;height:64px;box-shadow:0 8px 16px var(--diva-shadow-dark);border-radius:0;flex-wrap:wrap;padding:8px;display:flex}.throbber-cube{background-color:var(--diva-accent);width:16px;height:16px;animation-name:diva-cube-grid;animation-duration:1.3s;animation-timing-function:ease-in-out;animation-iteration-count:infinite}@keyframes diva-cube-grid{0%{transform:scale(1)}35%{transform:scale(0)}70%{transform:scale(1)}to{transform:scale(1)}}@media (width<=720px){.diva-app{padding:12px}.diva-app-body{flex-direction:column;gap:12px}.sidebar-resizer,.collection-resizer{display:none}}.diva-image-unavailable{background:color-mix(in srgb, var(--diva-background-color,#fff) 92%, transparent);box-sizing:border-box;text-align:center;border:1px solid #999;flex-direction:column;justify-content:center;align-items:center;padding:1rem;display:flex}.diva-image-unavailable button{cursor:pointer}.sidebar-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;width:320px;height:100%;min-height:0;display:flex;overflow:hidden}.sidebar-tabs{border:1px solid var(--diva-surface);background-color:var(--diva-surface);border-radius:0;display:flex}.sidebar-tab-button{font-size:var(--diva-font-md);text-transform:uppercase;cursor:pointer;color:var(--diva-text-muted);background-color:#0000;border:none;flex:1;padding:10px 12px}.sidebar-tab-button.is-active{background-color:var(--diva-white);font-weight:600}.sidebar-content{background-color:var(--diva-page-bg);flex-direction:column;flex:1;min-height:0;display:flex;position:relative;overflow:hidden}.sidebar-pane{flex:1;width:100%;min-height:0}.sidebar-pane.is-hidden{display:none}.thumbs{scroll-behavior:smooth;background-color:var(--diva-dark-bg);flex:1;grid-template-columns:repeat(3,minmax(0,1fr));align-content:start;gap:10px;width:100%;height:100%;min-height:0;padding:12px;display:grid;overflow-y:auto}.thumbs.is-fullscreen{height:100%}.thumbs-item{border:1px solid var(--diva-dark-border);text-align:left;flex-direction:column;justify-content:flex-start;align-items:stretch;max-width:none;display:flex}.thumbs-item:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.thumbs-item.is-active{border-color:var(--diva-accent-light);box-shadow:0 0 0 var(--diva-shadow-focus);background-color:var(--diva-dark-bg);outline:2px solid var(--diva-accent-light);outline-offset:2px}.thumbs-image{border-radius:0;width:100%;height:auto;display:block}.thumbs-lazy-image{background:var(--diva-dark-bg);width:100%;min-height:96px;display:block}.thumbs-image--protected{background:var(--diva-dark-bg);min-height:96px}.thumbs-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted-on-dark);margin-top:6px;line-height:1.3}.thumbs-label.is-active{color:var(--diva-white)}.contents-panel{height:100%;padding:12px;overflow:auto}.contents-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:10px;font-weight:600}.contents-view-tabs{gap:8px;margin-bottom:12px;display:flex}.contents-view-button{background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);color:var(--diva-text-muted);cursor:pointer;border-radius:0;padding:4px 10px}.contents-view-button.is-active{background-color:var(--diva-white);border-color:var(--diva-accent);color:var(--diva-text-primary)}.contents-list-nested{border-left:1px solid var(--diva-border);margin-top:6px;margin-left:6px;padding-left:13px}.contents-item{margin-bottom:6px}.contents-meta{border:1px solid var(--diva-dark-border);flex-direction:column;gap:10px;margin-top:6px;padding:8px;display:flex}.contents-meta dl>div+div{border-top:1px solid var(--diva-dark-border);margin-top:.75rem;padding-top:.75rem}.contents-meta dt{font-weight:600}.contents-meta dd{margin:0 0 .5rem 1rem}.contents-meta dd:last-child{margin-bottom:0}.contents-button:hover{color:var(--diva-accent)}.contents-button.is-current{font-weight:600}@media (width<=720px){.sidebar-panel{border-radius:0;height:auto;width:100%!important}.sidebar-panel.is-overlay{z-index:100;width:100%;height:100%;box-shadow:0 12px 24px var(--diva-shadow-dark);border-radius:0;position:absolute;inset:0}.sidebar-panel.is-mobile-hidden{display:none}.thumbs{grid-template-columns:repeat(3,minmax(0,1fr));width:100%;height:auto;overflow:auto hidden}.thumbs-item{min-width:120px}}.canvas-toolbar-stack{flex-direction:column;gap:4px;width:100%;min-width:0;display:flex}.canvas-toolbar{align-items:center;width:100%;margin-bottom:0;display:flex}.canvas-toolbar-section{flex:none;align-items:center;gap:5px;min-width:0;display:flex}.canvas-toolbar-section.is-right{flex:none;margin-left:auto}.canvas-toolbar-end{align-items:center;gap:8px;min-width:0;margin-left:auto;display:flex}.canvas-toolbar-end .canvas-toolbar-section.is-right{margin-left:0}.canvas-toolbar-item{flex:none;justify-content:center;align-items:center;width:34px;height:34px;display:flex;position:relative}.canvas-toolbar-button{width:30px;height:30px;color:var(--diva-toolbar-button-icon);box-shadow:none;cursor:pointer;background-color:#e2e2e2f0;border:1px solid #2c2d3373;border-radius:0;justify-content:center;align-items:center;padding:6px;display:flex}.canvas-toolbar-button svg{flex:none;width:16px;height:16px}.canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.canvas-toolbar-button:hover{border-color:var(--diva-toolbar-button-icon);background-color:#d6d6d6fa}.canvas-toolbar-button.is-fullscreen{color:var(--diva-white);background-color:#52586294;border-color:#ffffff85}.canvas-toolbar-button.is-fullscreen:hover{border-color:var(--diva-white);background-color:#606874b8}.canvas-toolbar-button.is-disabled{opacity:.4;cursor:not-allowed}.canvas-toolbar-button.is-disabled:hover{background-color:#e2e2e2f0;border-color:#2c2d3373}.canvas-toolbar-button.is-fullscreen.is-disabled:hover{background-color:#52586294;border-color:#ffffff85}.canvas-toolbar-item:after{z-index:80;max-width:160px;color:var(--diva-white);content:attr(data-tooltip);font-size:var(--diva-font-xs);letter-spacing:.02em;opacity:0;pointer-events:none;text-align:center;visibility:hidden;white-space:normal;word-break:normal;background-color:#1c1d22f2;border:1px solid #ffffff2e;border-radius:0;width:max-content;padding:5px 7px;font-weight:600;line-height:1.2;transition:opacity .12s,transform .12s;position:absolute;top:calc(100% + 7px);left:50%;transform:translate(-50%,-3px);box-shadow:0 4px 10px #0003}.canvas-toolbar-item:hover:after,.canvas-toolbar-item:has(.canvas-toolbar-button:focus-visible):after{opacity:1;visibility:visible;transform:translate(-50%)}.canvas-toolbar-section.is-right .canvas-toolbar-item:last-child:after{left:auto;right:0;transform:translateY(-3px)}.canvas-toolbar-section.is-right .canvas-toolbar-item:last-child:hover:after,.canvas-toolbar-section.is-right .canvas-toolbar-item:last-child:has(.canvas-toolbar-button:focus-visible):after{transform:translate(0)}.canvas-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:100%}.canvas-toolbar-end .canvas-label{overflow-wrap:normal;text-align:right;white-space:nowrap;word-break:normal;flex:auto;width:auto;min-width:0;max-width:min(42vw,42rem);overflow:hidden}.canvas-label.is-fullscreen{color:var(--diva-white)}.status{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:0}.status.is-error{color:var(--diva-danger)}@media (width<=720px){.canvas-toolbar{flex-wrap:wrap;gap:5px}.canvas-toolbar-end{justify-content:flex-end;width:100%;margin-left:0}.canvas-toolbar-item{width:32px;height:32px}.canvas-toolbar-button{width:28px;height:28px;padding:6px}.canvas-toolbar-button svg{width:15px;height:15px}.canvas-label,.status{display:none}}.modal-overlay{background-color:var(--diva-overlay-bg);z-index:100;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.viewer-status-overlay{background-color:var(--diva-overlay-bg);z-index:40;justify-content:center;align-items:center;padding:24px;display:flex;position:absolute;inset:0}.modal-overlay.is-fullscreen{padding:0}.modal{background-color:var(--diva-page-bg);color:var(--diva-text-primary);width:min(1440px,96vw);max-height:90vh;box-shadow:0 20px 40px var(--diva-shadow-modal);border-radius:0;flex-direction:column;display:flex}.modal.is-narrow{width:min(960px,94vw)}.modal.is-page-view{height:80vh;max-height:80vh}.modal.is-fullscreen{border-radius:0;width:100vw;height:100vh;max-height:100vh}.modal-header{justify-content:space-between;align-items:center;padding:16px 20px 0;display:flex}.modal-actions{gap:8px;display:flex}.modal-close-action .canvas-toolbar-button{color:var(--diva-danger);box-shadow:none;-webkit-backdrop-filter:none;background-color:#0000;border:none;width:auto;height:auto;padding:2px}.modal-close-action .canvas-toolbar-button:hover{background-color:#d32f2f1f;border-color:#0000}.modal-close-action .canvas-toolbar-item{width:32px}.modal-title-stack{flex-direction:column;gap:4px;display:flex}.modal-title{font-size:var(--diva-font-lg);font-weight:600}.modal-subtitle{font-size:var(--diva-font-lg);color:var(--diva-text-primary)}.modal-subtitle.is-muted{font-size:var(--diva-font-md)}.modal-body{flex:1;grid-template-columns:minmax(0,1fr) 240px;gap:16px;min-height:0;padding:16px 20px 20px;display:grid}.modal-body.is-no-gap{gap:0}.modal-body.is-two-column{grid-template-columns:minmax(0,1fr) 200px;align-items:start}.modal-body.is-no-sidebar{grid-template-columns:minmax(0,1fr)}.modal-body.is-fullscreen{flex:1;min-height:0}.modal-body.is-with-choices{grid-template-columns:120px minmax(0,1fr) 240px}.modal-body.is-with-choices-no-sidebar{grid-template-columns:120px minmax(0,1fr)}.modal-viewer{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);height:100%;overflow:hidden}.modal-viewer.is-fullscreen{border-radius:0;height:100%}.modal-viewer.is-outer-left{border-radius:0}.modal-canvas{width:100%;height:100%;display:block}.modal-sidebar{background-color:var(--diva-white);border-top:1px solid var(--diva-border);border-right:1px solid var(--diva-border);border-bottom:1px solid var(--diva-border);border-radius:0;padding:16px;overflow:auto}.manifest-info-logo-wrap{text-align:center;flex-direction:column;align-items:center;gap:8px;display:flex}.manifest-info-logo{width:100%;max-width:180px;height:auto}.page-view-choices{background-color:var(--diva-dark-bg);border-radius:0;flex-direction:column;gap:8px;padding:8px;display:flex;overflow:auto}.page-view-choice{border:2px solid #0000;flex-direction:column;gap:4px;display:flex}.page-view-choice:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.page-view-choice:hover{background-color:var(--diva-dark-bg)}.page-view-choice.is-active{border-color:var(--diva-accent-light);background-color:var(--diva-dark-bg)}.page-view-choice-thumb{border-radius:0;width:100%;height:auto;display:block}.page-view-choice-thumb--protected{background:var(--diva-dark-bg);min-height:72px}.page-view-choice-label{font-size:var(--diva-font-xs);color:var(--diva-text-muted);text-overflow:ellipsis;white-space:nowrap;line-height:1.2;overflow:hidden}.filter-group{border-bottom:1px solid var(--diva-border);margin-bottom:12px;padding-bottom:12px}.filter-title-button{text-align:left;cursor:pointer;width:100%;font-size:var(--diva-font-sm);text-transform:uppercase;letter-spacing:.08em;color:var(--diva-text-muted);background-color:#0000;border:none;align-items:center;gap:8px;margin-bottom:8px;padding:0;font-weight:600;display:flex}.filter-title-button.is-collapsed{margin-bottom:0}.filter-title-icon{border-top:4px solid #0000;border-bottom:4px solid #0000;border-left:6px solid var(--diva-text-muted);width:0;height:0;transition:transform .15s;display:inline-block}.filter-title-icon.is-expanded{transform:rotate(90deg)}.filter-row{flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px;display:flex}.filter-toggle{font-size:var(--diva-font-md);align-items:center;gap:8px;margin-bottom:8px;display:flex}.filter-toggle.is-inline{margin-bottom:0}.filter-range-group{flex-direction:column;gap:6px;margin-bottom:10px;display:flex}.filter-range-header{justify-content:space-between;align-items:center;gap:8px;display:flex}.filter-range-header-right{align-items:center;gap:8px;display:flex}.filter-range-input{width:100%}.filter-value{font-size:var(--diva-font-sm);color:var(--diva-text-muted);text-align:right;width:40px}.filter-reset{font-size:var(--diva-font-xs);background-color:var(--diva-surface);border:1px solid var(--diva-border);cursor:pointer;color:var(--diva-text-muted);border-radius:0;padding:2px 6px}.filter-reset:hover{background-color:var(--diva-border)}.filter-json{width:100%;min-height:120px;font-size:var(--diva-font-sm);border:1px solid var(--diva-border);background-color:var(--diva-white);resize:vertical;border-radius:0;padding:6px 8px;font-family:Menlo,Monaco,Consolas,Liberation Mono,monospace}.filter-json-error{font-size:var(--diva-font-sm);color:var(--diva-danger);margin-top:4px}.filter-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted)}.filter-select{border:1px solid var(--diva-border);background-color:var(--diva-white);font-size:var(--diva-font-sm);border-radius:0;padding:4px 6px}.filter-color-input{border:1px solid var(--diva-border);background-color:var(--diva-white);border-radius:0;width:42px;height:28px;padding:0}.diva-auth-overlay{z-index:10000;background:#0000008c;place-items:center;display:grid;position:fixed;inset:0}.diva-auth-dialog{box-sizing:border-box;border:1px solid var(--diva-border,#aaa);background:var(--diva-background,#fff);width:min(30rem,100vw - 2rem);color:var(--diva-text-primary,#222);border-radius:0;padding:1.25rem}.diva-auth-dialog button{min-height:2.25rem;color:inherit;cursor:pointer;background:0 0;border:1px solid;border-radius:0;padding:.35rem .8rem}.diva-auth-dialog button:focus-visible{outline:2px solid var(--diva-accent,#1769aa);outline-offset:2px}.collection-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;height:100%;min-height:0;display:flex;overflow:hidden}.collection-header{background-color:var(--diva-surface);border-bottom:1px solid var(--diva-border);border-radius:0;padding:12px}.collection-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:4px;font-weight:600}.collection-summary{font-size:var(--diva-font-md);color:var(--diva-text-muted);line-height:1.4}.collection-tree-item{padding-left:12px}.collection-node-button{align-items:center;gap:6px;width:100%;padding:6px 8px;display:flex}.collection-expand-icon{flex-shrink:0;justify-content:center;align-items:center;width:16px;height:16px;display:flex}.manifest-tree-item{padding:6px 8px 6px 30px}.manifest-tree-item.is-active{background-color:var(--diva-border);font-weight:600}.sidebar-pane.is-scroll{overflow-y:auto}@media (width<=720px){.collection-panel{border-radius:0;width:100%;height:auto}}";
+  var diva_default = ":root{--diva-accent:#5a6bff;--diva-accent-light:#9aa4ff;--diva-border:#d9d4ce;--diva-danger:#d32f2f;--diva-dark-bg:#1c1d22;--diva-dark-border:#2c2d33;--diva-overlay-bg:#10111499;--diva-page-bg:#f7f5f1;--diva-shadow-dark:#00000026;--diva-shadow-focus:#9aa4ff59;--diva-shadow-modal:#00000040;--diva-surface:#e6e1dc;--diva-text-muted:#5c5a55;--diva-text-muted-on-dark:#ffffffb3;--diva-text-primary:#1b1b1b;--diva-toolbar-button-bg:#5258626b;--diva-toolbar-button-bg-hover:#5c636e85;--diva-toolbar-button-bg-fullscreen:#52586285;--diva-toolbar-button-bg-fullscreen-hover:#6068749e;--diva-toolbar-button-border:#ffffff59;--diva-toolbar-button-border-hover:#ffffff73;--diva-toolbar-button-border-fullscreen-hover:#fff9;--diva-toolbar-button-icon:#2c2d33;--diva-toolbar-button-shadow:inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #ffffff2e;--diva-toolbar-button-shadow-hover:inset 0 1px 0 #ffffffb3, inset 0 -1px 0 #ffffff3d;--diva-white:#fff;--diva-font-lg:16px;--diva-font-md:13px;--diva-font-sm:11px;--diva-font-xs:10px;--diva-font-xl:20px}.diva-app{color-scheme:light}.diva-app,.diva-app *{box-sizing:border-box}.diva-list-reset{margin:0;padding:0;list-style:none}.diva-ui-button{text-align:left;cursor:pointer;color:var(--diva-text-primary);font-size:var(--diva-font-lg);background-color:#0000;border:none;padding:0}.diva-ui-button:hover{background-color:var(--diva-surface)}.diva-ui-card{cursor:pointer;border-radius:0;width:100%;padding:6px}.diva-ui-card--dark{background-color:var(--diva-dark-bg)}.diva-app{color-scheme:light;flex-direction:column;flex:1;height:100%;min-height:0;padding:12px 24px;display:flex}.diva-app.is-fullscreen{height:100vh;min-height:100vh;padding:0}.diva-app-header{font-size:var(--diva-font-lg);align-items:center;gap:12px;margin-bottom:8px;font-weight:600;display:flex}.diva-app-title{font-size:var(--diva-font-xl);text-align:left;color:var(--diva-text-primary);margin-bottom:6px;font-weight:600}.diva-app-title.is-fullscreen{color:var(--diva-white)}.diva-app-body{flex:1;align-items:stretch;gap:0;height:100%;min-height:0;display:flex;position:relative}.diva-app-body.is-fullscreen{flex:1;min-height:0}.diva-canvas-column{flex-direction:column;flex:1;gap:24px;min-width:0;min-height:0;display:flex}.diva-canvas-column.is-fullscreen{flex:1;height:100%;min-height:0}.diva-canvas-wrapper{flex:1;min-height:0;position:relative}.diva-canvas{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);border-radius:0;width:100%;height:100%;overflow:hidden}.diva-canvas.is-fullscreen{border-radius:0;flex:1;height:100%}.diva-canvas.has-collection{border-radius:0}.diva-metadata-panel{height:100%;padding:12px;overflow:auto}.diva-metadata-body{flex-direction:column;gap:10px;display:flex}.diva-metadata-item{flex-direction:column;gap:0;display:flex}.diva-metadata-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);letter-spacing:.05em;font-weight:600;line-height:1.3}.diva-metadata-value{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px;line-height:1.3}.diva-metadata-value>:first-child{margin-top:0}.diva-metadata-value>:last-child{margin-bottom:0}.diva-contents-empty{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px}.diva-sidebar-resizer,.diva-collection-resizer{width:12px;font-size:var(--diva-font-xl);color:var(--diva-white);background-color:var(--diva-text-muted);cursor:col-resize;user-select:none;touch-action:none;flex:0 0 12px;justify-content:center;align-self:stretch;align-items:center;line-height:1;display:flex}.diva-sidebar-resizer:hover,.diva-sidebar-resizer:active,.diva-collection-resizer:hover,.diva-collection-resizer:active{cursor:col-resize}.diva-sidebar-resizer.is-hidden,.diva-collection-resizer.is-hidden{display:none}.diva-sidebar-panel.is-fullscreen,.diva-collection-panel.is-fullscreen{border-radius:0;height:100%}.diva-sidebar-panel.is-hidden,.diva-collection-panel.is-hidden{opacity:0;pointer-events:none;border-width:0;padding:0;overflow:hidden}.diva-required-statement-dock{justify-content:flex-end;width:100%;margin-top:12px;padding-right:8px;display:flex}.diva-required-statement{font-size:var(--diva-font-md);color:var(--diva-text-muted);text-align:right;min-width:250px;max-width:20vw;line-height:1.4}.diva-scrollbar-track{background:var(--diva-surface);border:1px solid var(--diva-border);z-index:100;border-radius:0;width:12px;position:absolute;top:4px;bottom:4px;right:4px}.diva-scrollbar-thumb{background:var(--diva-text-muted);cursor:pointer;border-radius:0;min-height:30px;position:absolute;left:1px;right:1px}.diva-scrollbar-thumb:hover{background:var(--diva-text-primary)}.diva-scrollbar-thumb:active{background:var(--diva-dark-border)}.diva-throbber-overlay{pointer-events:none;justify-content:center;align-items:center;display:flex;position:absolute;inset:0}.diva-viewer-zoom-indicator{z-index:30;pointer-events:none;font-size:var(--diva-font-sm);color:var(--diva-white);background-color:#0000008c;border-radius:0;padding:4px 8px;font-weight:600;position:absolute;bottom:12px;left:12px}.diva-throbber{background-color:var(--diva-white);width:64px;height:64px;box-shadow:0 8px 16px var(--diva-shadow-dark);border-radius:0;flex-wrap:wrap;padding:8px;display:flex}.diva-throbber-cube{background-color:var(--diva-accent);width:16px;height:16px;animation-name:diva-cube-grid;animation-duration:1.3s;animation-timing-function:ease-in-out;animation-iteration-count:infinite}@keyframes diva-cube-grid{0%{transform:scale(1)}35%{transform:scale(0)}70%{transform:scale(1)}to{transform:scale(1)}}@media (width<=720px){.diva-app{padding:12px}.diva-app-body{flex-direction:column;gap:12px}.diva-sidebar-resizer,.diva-collection-resizer{display:none}}.diva-image-unavailable{background:color-mix(in srgb, var(--diva-background-color,#fff) 92%, transparent);box-sizing:border-box;text-align:center;border:1px solid #999;flex-direction:column;justify-content:center;align-items:center;padding:1rem;display:flex}.diva-image-unavailable button{cursor:pointer}.diva-sidebar-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;flex:none;width:320px;height:100%;min-height:0;display:flex;overflow:hidden}.diva-sidebar-tabs{border:1px solid var(--diva-surface);background-color:var(--diva-surface);border-radius:0;display:flex}.diva-sidebar-tab-button{font-size:var(--diva-font-md);text-transform:uppercase;cursor:pointer;color:var(--diva-text-muted);background-color:#0000;border:none;flex:1;padding:10px 12px}.diva-sidebar-tab-button.is-active{background-color:var(--diva-white);font-weight:600}.diva-sidebar-content{background-color:var(--diva-page-bg);flex-direction:column;flex:1;min-height:0;display:flex;position:relative;overflow:hidden}.diva-sidebar-pane{flex:1;width:100%;min-height:0}.diva-sidebar-pane.is-hidden{display:none}.diva-thumbs{scroll-behavior:smooth;background-color:var(--diva-dark-bg);flex:1;grid-template-columns:repeat(3,minmax(0,1fr));align-content:start;gap:10px;width:100%;height:100%;min-height:0;padding:12px;display:grid;overflow-y:auto}.diva-thumbs.is-fullscreen{height:100%}.diva-thumbs-item{border:1px solid var(--diva-dark-border);text-align:left;flex-direction:column;justify-content:flex-start;align-items:stretch;max-width:none;display:flex}.diva-thumbs-item:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-thumbs-item.is-active{border-color:var(--diva-accent-light);box-shadow:0 0 0 var(--diva-shadow-focus);background-color:var(--diva-dark-bg);outline:2px solid var(--diva-accent-light);outline-offset:2px}.diva-thumbs-image{border-radius:0;width:100%;height:auto;display:block}.diva-thumbs-lazy-image{background:var(--diva-dark-bg);width:100%;min-height:96px;display:block}.diva-thumbs-image--protected,.diva-thumbs-image--unavailable{background:var(--diva-dark-bg);min-height:96px}.diva-thumbs-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted-on-dark);margin-top:6px;line-height:1.3}.diva-thumbs-label.is-active{color:var(--diva-white)}.diva-contents-panel{height:100%;padding:12px;overflow:auto}.diva-contents-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:10px;font-weight:600}.diva-contents-view-tabs{gap:8px;margin-bottom:12px;display:flex}.diva-contents-view-button{background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);color:var(--diva-text-muted);cursor:pointer;border-radius:0;padding:4px 10px}.diva-contents-view-button.is-active{background-color:var(--diva-white);border-color:var(--diva-accent);color:var(--diva-text-primary)}.diva-contents-list-nested{border-left:1px solid var(--diva-border);margin-top:6px;margin-left:6px;padding-left:13px}.diva-contents-item{margin-bottom:6px}.diva-contents-heading{align-items:baseline;display:flex}.diva-contents-disclosure{color:var(--diva-text-muted);cursor:pointer;text-align:center;flex:0 0 1.25rem}.diva-contents-disclosure:hover{color:var(--diva-accent)}.diva-contents-meta{border:1px solid var(--diva-dark-border);flex-direction:column;gap:10px;margin-top:6px;padding:8px;display:flex}.diva-contents-meta dl>div+div{border-top:1px solid var(--diva-dark-border);margin-top:.75rem;padding-top:.75rem}.diva-contents-meta dt{font-weight:600}.diva-contents-meta dd{margin:0 0 .5rem 1rem}.diva-contents-meta dd:last-child{margin-bottom:0}.diva-contents-button:hover{color:var(--diva-accent)}.diva-contents-button.is-current{font-weight:600}@media (width<=720px){.diva-sidebar-panel{border-radius:0;height:auto;width:100%!important}.diva-sidebar-panel.is-overlay{z-index:100;width:100%;height:100%;box-shadow:0 12px 24px var(--diva-shadow-dark);border-radius:0;position:absolute;inset:0}.diva-sidebar-panel.is-mobile-hidden{display:none}.diva-thumbs{grid-template-columns:repeat(3,minmax(0,1fr));width:100%;height:auto;overflow:auto hidden}.diva-thumbs-item{min-width:120px}}.diva-canvas-toolbar-stack{flex-direction:column;gap:4px;width:100%;min-width:0;display:flex}.diva-canvas-toolbar{align-items:center;width:100%;margin-bottom:0;display:flex}.diva-canvas-toolbar-section{flex:none;align-items:center;gap:5px;min-width:0;display:flex}.diva-canvas-toolbar-section.is-right{flex:none;margin-left:auto}.diva-canvas-toolbar-end{align-items:center;gap:8px;min-width:0;margin-left:auto;display:flex}.diva-canvas-toolbar-end .diva-canvas-toolbar-section.is-right{margin-left:0}.diva-canvas-toolbar-item{flex:none;justify-content:center;align-items:center;width:34px;height:34px;display:flex;position:relative}.diva-canvas-toolbar-button{width:30px;height:30px;color:var(--diva-toolbar-button-icon);box-shadow:none;cursor:pointer;background-color:#e2e2e2f0;border:1px solid #2c2d3373;border-radius:0;justify-content:center;align-items:center;padding:6px;display:flex}.diva-canvas-toolbar-button svg{flex:none;width:16px;height:16px}.diva-canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-canvas-toolbar-button:hover{border-color:var(--diva-toolbar-button-icon);background-color:#d6d6d6fa}.diva-canvas-toolbar-button.is-fullscreen{color:var(--diva-white);background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-button.is-fullscreen:hover{border-color:var(--diva-white);background-color:#606874b8}.diva-canvas-toolbar-button.is-disabled{opacity:.4;cursor:not-allowed}.diva-canvas-toolbar-button.is-disabled:hover{background-color:#e2e2e2f0;border-color:#2c2d3373}.diva-canvas-toolbar-button.is-fullscreen.is-disabled:hover{background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-item:after{z-index:80;max-width:160px;color:var(--diva-white);content:attr(data-tooltip);font-size:var(--diva-font-xs);letter-spacing:.02em;opacity:0;pointer-events:none;text-align:center;visibility:hidden;white-space:normal;word-break:normal;background-color:#1c1d22f2;border:1px solid #ffffff2e;border-radius:0;width:max-content;padding:5px 7px;font-weight:600;line-height:1.2;transition:opacity .12s,transform .12s;position:absolute;top:calc(100% + 7px);left:50%;transform:translate(-50%,-3px);box-shadow:0 4px 10px #0003}.diva-canvas-toolbar-item:hover:after,.diva-canvas-toolbar-item:has(.diva-canvas-toolbar-button:focus-visible):after{opacity:1;visibility:visible;transform:translate(-50%)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:after{left:auto;right:0;transform:translateY(-3px)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:hover:after,.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:has(.diva-canvas-toolbar-button:focus-visible):after{transform:translate(0)}.diva-canvas-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:100%}.diva-canvas-toolbar-end .diva-canvas-label{overflow-wrap:normal;text-align:right;white-space:nowrap;word-break:normal;flex:auto;width:auto;min-width:0;max-width:min(42vw,42rem);overflow:hidden}.diva-canvas-label.is-fullscreen{color:var(--diva-white)}.diva-status{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:0}.diva-status.is-error{color:var(--diva-danger)}@media (width<=720px){.diva-canvas-toolbar{flex-wrap:wrap;gap:5px}.diva-canvas-toolbar-end{justify-content:flex-end;width:100%;margin-left:0}.diva-canvas-toolbar-item{width:32px;height:32px}.diva-canvas-toolbar-button{width:28px;height:28px;padding:6px}.diva-canvas-toolbar-button svg{width:15px;height:15px}.diva-canvas-label,.diva-status{display:none}}.diva-modal-overlay{background-color:var(--diva-overlay-bg);z-index:100;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.diva-viewer-status-overlay{background-color:var(--diva-overlay-bg);z-index:40;justify-content:center;align-items:center;padding:24px;display:flex;position:absolute;inset:0}.diva-modal-overlay.is-fullscreen{padding:0}.diva-modal{background-color:var(--diva-page-bg);color:var(--diva-text-primary);width:min(1440px,96vw);max-height:90vh;box-shadow:0 20px 40px var(--diva-shadow-modal);border-radius:0;flex-direction:column;display:flex}.diva-modal.is-narrow{width:min(960px,94vw)}.diva-modal.is-page-view{height:80vh;max-height:80vh}.diva-modal.is-fullscreen{border-radius:0;width:100vw;height:100vh;max-height:100vh}.diva-modal-header{justify-content:space-between;align-items:center;padding:16px 20px 0;display:flex}.diva-modal-actions{gap:8px;display:flex}.diva-modal-close-action .diva-canvas-toolbar-button{color:var(--diva-danger);box-shadow:none;-webkit-backdrop-filter:none;background-color:#0000;border:none;width:auto;height:auto;padding:2px}.diva-modal-close-action .diva-canvas-toolbar-button:hover{background-color:#d32f2f1f;border-color:#0000}.diva-modal-close-action .diva-canvas-toolbar-item{width:32px}.diva-modal-title-stack{flex-direction:column;gap:4px;display:flex}.diva-modal-title{font-size:var(--diva-font-lg);font-weight:600}.diva-modal-subtitle{font-size:var(--diva-font-lg);color:var(--diva-text-primary)}.diva-modal-subtitle.is-muted{font-size:var(--diva-font-md)}.diva-modal-body{flex:1;grid-template-columns:minmax(0,1fr) 240px;gap:16px;min-height:0;padding:16px 20px 20px;display:grid}.diva-modal-body.is-no-gap{gap:0}.diva-modal-body.is-two-column{grid-template-columns:minmax(0,1fr) 200px;align-items:start}.diva-modal-body.is-no-sidebar{grid-template-columns:minmax(0,1fr)}.diva-modal-body.is-fullscreen{flex:1;min-height:0}.diva-modal-body.is-with-choices{grid-template-columns:120px minmax(0,1fr) 240px}.diva-modal-body.is-with-choices-no-sidebar{grid-template-columns:120px minmax(0,1fr)}.diva-modal-viewer{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);height:100%;overflow:hidden}.diva-modal-viewer.is-fullscreen{border-radius:0;height:100%}.diva-modal-viewer.is-outer-left{border-radius:0}.diva-modal-canvas{width:100%;height:100%;display:block}.diva-modal-sidebar{background-color:var(--diva-white);border-top:1px solid var(--diva-border);border-right:1px solid var(--diva-border);border-bottom:1px solid var(--diva-border);border-radius:0;padding:16px;overflow:auto}.diva-manifest-info-logo-wrap{text-align:center;flex-direction:column;align-items:center;gap:8px;display:flex}.diva-manifest-info-logo{width:100%;max-width:180px;height:auto}.diva-page-view-choices{background-color:var(--diva-dark-bg);border-radius:0;flex-direction:column;gap:8px;padding:8px;display:flex;overflow:auto}.diva-page-view-choice{border:2px solid #0000;flex-direction:column;gap:4px;display:flex}.diva-page-view-choice:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-page-view-choice:hover{background-color:var(--diva-dark-bg)}.diva-page-view-choice.is-active{border-color:var(--diva-accent-light);background-color:var(--diva-dark-bg)}.diva-page-view-choice-thumb{border-radius:0;width:100%;height:auto;display:block}.diva-page-view-choice-thumb--protected{background:var(--diva-dark-bg);min-height:72px}.diva-page-view-choice-label{font-size:var(--diva-font-xs);color:var(--diva-text-muted);text-overflow:ellipsis;white-space:nowrap;line-height:1.2;overflow:hidden}.diva-filter-group{border-bottom:1px solid var(--diva-border);margin-bottom:12px;padding-bottom:12px}.diva-filter-title-button{text-align:left;cursor:pointer;width:100%;font-size:var(--diva-font-sm);text-transform:uppercase;letter-spacing:.08em;color:var(--diva-text-muted);background-color:#0000;border:none;align-items:center;gap:8px;margin-bottom:8px;padding:0;font-weight:600;display:flex}.diva-filter-title-button.is-collapsed{margin-bottom:0}.diva-filter-title-icon{border-top:4px solid #0000;border-bottom:4px solid #0000;border-left:6px solid var(--diva-text-muted);width:0;height:0;transition:transform .15s;display:inline-block}.diva-filter-title-icon.is-expanded{transform:rotate(90deg)}.diva-filter-row{flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle{font-size:var(--diva-font-md);align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle.is-inline{margin-bottom:0}.diva-filter-range-group{flex-direction:column;gap:6px;margin-bottom:10px;display:flex}.diva-filter-range-header{justify-content:space-between;align-items:center;gap:8px;display:flex}.diva-filter-range-header-right{align-items:center;gap:8px;display:flex}.diva-filter-range-input{width:100%}.diva-filter-value{font-size:var(--diva-font-sm);color:var(--diva-text-muted);text-align:right;width:40px}.diva-filter-reset{font-size:var(--diva-font-xs);background-color:var(--diva-surface);border:1px solid var(--diva-border);cursor:pointer;color:var(--diva-text-muted);border-radius:0;padding:2px 6px}.diva-filter-reset:hover{background-color:var(--diva-border)}.diva-filter-json{width:100%;min-height:120px;font-size:var(--diva-font-sm);border:1px solid var(--diva-border);background-color:var(--diva-white);resize:vertical;border-radius:0;padding:6px 8px;font-family:Menlo,Monaco,Consolas,Liberation Mono,monospace}.diva-filter-json-error{font-size:var(--diva-font-sm);color:var(--diva-danger);margin-top:4px}.diva-filter-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted)}.diva-filter-select{border:1px solid var(--diva-border);background-color:var(--diva-white);font-size:var(--diva-font-sm);border-radius:0;padding:4px 6px}.diva-filter-color-input{border:1px solid var(--diva-border);background-color:var(--diva-white);border-radius:0;width:42px;height:28px;padding:0}.diva-auth-overlay{z-index:10000;background:#0000008c;place-items:center;display:grid;position:fixed;inset:0}.diva-auth-dialog{box-sizing:border-box;border:1px solid var(--diva-border,#aaa);background:var(--diva-background,#fff);width:min(30rem,100vw - 2rem);color:var(--diva-text-primary,#222);border-radius:0;padding:1.25rem}.diva-auth-dialog button{min-height:2.25rem;color:inherit;cursor:pointer;background:0 0;border:1px solid;border-radius:0;padding:.35rem .8rem}.diva-auth-dialog button:focus-visible{outline:2px solid var(--diva-accent,#1769aa);outline-offset:2px}.diva-collection-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;height:100%;min-height:0;display:flex;overflow:hidden}.diva-collection-header{background-color:var(--diva-surface);border-bottom:1px solid var(--diva-border);border-radius:0;padding:12px}.diva-collection-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:4px;font-weight:600}.diva-collection-summary{font-size:var(--diva-font-md);color:var(--diva-text-muted);line-height:1.4}.diva-collection-tree-item{padding-left:12px}.diva-collection-node-button{align-items:center;gap:6px;width:100%;padding:6px 8px;display:flex}.diva-collection-expand-icon{flex-shrink:0;justify-content:center;align-items:center;width:16px;height:16px;display:flex}.diva-manifest-tree-item{padding:6px 8px 6px 30px}.diva-manifest-tree-item.is-active{background-color:var(--diva-border);font-weight:600}.diva-sidebar-pane.is-scroll{overflow-y:auto}@media (width<=720px){.diva-collection-panel{border-radius:0;width:100%;height:auto}}";
 
   // cache/elm-esm.js
   function F(arity, fun, wrapper) {
@@ -14138,7 +14132,6 @@
         filtersJsonError: $elm$core$Maybe$Nothing,
         filtersJsonInput: "",
         fullscreen: false,
-        hasCommittedResource: false,
         hasTileSources: false,
         initialPage: flags.initialPage,
         initialResourceSuperseded: false,
@@ -14157,7 +14150,6 @@
         pendingThumbScroll: $elm$core$Maybe$Nothing,
         rangeIndexMap: $elm$core$Dict$empty,
         resourceResponse: $author$project$Model$ResourceLoading,
-        resourceSnapshot: $elm$core$Maybe$Nothing,
         response: $author$project$Model$Loading,
         rootElementId: flags.rootElementId,
         selectedIndex: $elm$core$Maybe$Nothing,
@@ -14205,12 +14197,6 @@
   };
   var $author$project$Msg$ClientNotifiedPageChangedInstant = function(a) {
     return { $: "ClientNotifiedPageChangedInstant", a };
-  };
-  var $author$project$Msg$ClientReportedResourceFailed = function(a) {
-    return { $: "ClientReportedResourceFailed", a };
-  };
-  var $author$project$Msg$ClientReportedResourceReady = function(a) {
-    return { $: "ClientReportedResourceReady", a };
   };
   var $author$project$Msg$ClientRequestedLayoutMode = function(a) {
     return { $: "ClientRequestedLayoutMode", a };
@@ -14721,8 +14707,6 @@
       A2($elm$json$Json$Decode$field, "sourceId", $elm$json$Json$Decode$string)
     )
   );
-  var $author$project$Main$resourceReadinessFailed = _Platform_incomingPort("resourceReadinessFailed", $elm$json$Json$Decode$string);
-  var $author$project$Main$resourceReadinessSucceeded = _Platform_incomingPort("resourceReadinessSucceeded", $elm$json$Json$Decode$string);
   var $author$project$Main$resourceRequested = _Platform_incomingPort(
     "resourceRequested",
     A2(
@@ -14759,8 +14743,6 @@
               return A2($author$project$Msg$ClientRequestedResource, request.requestId, request.url);
             }
           ),
-          $author$project$Main$resourceReadinessSucceeded($author$project$Msg$ClientReportedResourceReady),
-          $author$project$Main$resourceReadinessFailed($author$project$Msg$ClientReportedResourceFailed),
           $author$project$Main$layoutModeRequested($author$project$Msg$ClientRequestedLayoutMode),
           $author$project$Main$resolveTileSourceCancelled(
             A2($elm$core$Basics$composeR, $author$project$Auth$Cancel, $author$project$Msg$AuthEvent)
@@ -18544,10 +18526,30 @@
         return $elm$core$Maybe$Nothing;
       } else {
         var thumbUrl = A2($author$project$Model$canvasThumbnailUrl, images, canvas);
+        var fallbackThumbUrl = A2(
+          $elm$core$Maybe$withDefault,
+          "",
+          A2(
+            $elm$core$Maybe$map,
+            function($) {
+              return $.thumbUrl;
+            },
+            $elm$core$List$head(
+              A2(
+                $elm$core$List$filter,
+                function($) {
+                  return $.isPrimary;
+                },
+                images
+              )
+            )
+          )
+        );
         return $elm$core$Maybe$Just(
           {
             aspect: $rism_digital$elm_iiif$IIIF$Presentation$canvasAspect(canvas),
             canvasId: canvas.id,
+            fallbackThumbUrl,
             height: canvas.height,
             images,
             label: $rism_digital$elm_iiif$IIIF$Presentation$canvasLabel(canvas),
@@ -19178,12 +19180,7 @@
     }
   };
   var $author$project$Main$layoutModeUpdated = _Platform_outgoingPort("layoutModeUpdated", $elm$json$Json$Encode$string);
-  var $elm$core$Basics$min = F2(
-    function(x, y) {
-      return _Utils_cmp(x, y) < 0 ? x : y;
-    }
-  );
-  var $author$project$Main$mobileShortSideBreakpoint = 720;
+  var $author$project$Main$mobileWidthBreakpoint = 720;
   var $author$project$Main$replaceCollectionById = F3(
     function(collectionId, replacement, collection) {
       var rebuildUp = F2(
@@ -19415,167 +19412,6 @@
       );
     }
   );
-  var $author$project$Main$resourceRollbackCompleted = _Platform_outgoingPort(
-    "resourceRollbackCompleted",
-    function($) {
-      return $elm$json$Json$Encode$object(
-        _List_fromArray(
-          [
-            _Utils_Tuple2(
-              "pageIndex",
-              (function($2) {
-                return A3($elm$core$Maybe$destruct, $elm$json$Json$Encode$null, $elm$json$Json$Encode$int, $2);
-              })($.pageIndex)
-            ),
-            _Utils_Tuple2(
-              "requestId",
-              $elm$json$Json$Encode$string($.requestId)
-            )
-          ]
-        )
-      );
-    }
-  );
-  var $author$project$Model$currentManifest = function(model) {
-    var _v0 = model.resourceResponse;
-    switch (_v0.$) {
-      case "ResourceLoadedManifest":
-        var manifest = _v0.a;
-        return $elm$core$Maybe$Just(manifest);
-      case "ResourceLoadedCollection":
-        var _v1 = model.response;
-        if (_v1.$ === "Loaded") {
-          var manifest = _v1.a;
-          return $elm$core$Maybe$Just(manifest);
-        } else {
-          return $elm$core$Maybe$Nothing;
-        }
-      default:
-        return $elm$core$Maybe$Nothing;
-    }
-  };
-  var $author$project$Main$resourceCommands = F2(
-    function(resourceId, model) {
-      var tileSources = A2(
-        $elm$core$List$filterMap,
-        A2(
-          $elm$core$Basics$composeR,
-          $author$project$Model$primaryImage,
-          $elm$core$Maybe$map(
-            function(image) {
-              return { isStatic: image.isStatic, sourceId: image.sourceId, url: image.tileSource };
-            }
-          )
-        ),
-        model.pages
-      );
-      var initialPageIndex = A2($elm$core$Maybe$withDefault, 0, model.selectedIndex);
-      var direction = A2(
-        $elm$core$Maybe$withDefault,
-        "ltr",
-        A2(
-          $elm$core$Maybe$map,
-          A2($elm$core$Basics$composeR, $rism_digital$elm_iiif$IIIF$Presentation$toViewingDirection, $author$project$Main$viewingDirectionToString),
-          $author$project$Model$currentManifest(model)
-        )
-      );
-      return $elm$core$Platform$Cmd$batch(
-        _List_fromArray(
-          [
-            $author$project$Main$tileSourcesUpdated(
-              { initialPageIndex, resourceId, tileSources }
-            ),
-            $author$project$Main$pagesUpdated(
-              $author$project$Main$publicPages(model.pages)
-            ),
-            $author$project$Main$pageAspectsUpdated(
-              A2(
-                $elm$core$List$map,
-                function($) {
-                  return $.aspect;
-                },
-                model.pages
-              )
-            ),
-            $author$project$Main$pageLabelsUpdated(
-              A2(
-                $elm$core$List$map,
-                function($) {
-                  return $.label;
-                },
-                model.pages
-              )
-            ),
-            $author$project$Main$zoomLevelUpdated(
-              A2($elm$core$Maybe$withDefault, 1, model.currentZoom)
-            ),
-            $author$project$Main$layoutConfigUpdated(
-              {
-                direction,
-                mode: A2($author$project$Main$layoutModeToString, model.viewMode, model.shiftByOne)
-              }
-            ),
-            $author$project$Main$sendPageViewPreview(model)
-          ]
-        )
-      );
-    }
-  );
-  var $author$project$Main$rollbackResource = F2(
-    function(requestId, model) {
-      var _v0 = model.resourceSnapshot;
-      if (_v0.$ === "Just") {
-        var previous = _v0.a.a;
-        var restored = _Utils_update(
-          previous,
-          { initialResourceSuperseded: true, isViewerLoading: false, pendingPublicResource: $elm$core$Maybe$Nothing, resourceSnapshot: $elm$core$Maybe$Nothing }
-        );
-        return _Utils_Tuple2(
-          restored,
-          $elm$core$Platform$Cmd$batch(
-            _List_fromArray(
-              [
-                A2($author$project$Main$resourceCommands, "rollback-" + requestId, restored),
-                $author$project$Main$resourceRollbackCompleted(
-                  { pageIndex: restored.selectedIndex, requestId }
-                )
-              ]
-            )
-          )
-        );
-      } else {
-        var cleared = _Utils_update(
-          model,
-          {
-            auth: $author$project$Auth$init,
-            currentZoom: $elm$core$Maybe$Nothing,
-            hasTileSources: false,
-            isViewerLoading: false,
-            pages: _List_Nil,
-            pendingPublicResource: $elm$core$Maybe$Nothing,
-            rangeIndexMap: $elm$core$Dict$empty,
-            resourceResponse: $author$project$Model$ResourceFailed("The resource could not be displayed."),
-            resourceSnapshot: $elm$core$Maybe$Nothing,
-            response: $author$project$Model$Failed("The resource could not be displayed."),
-            selectedIndex: $elm$core$Maybe$Nothing
-          }
-        );
-        return _Utils_Tuple2(
-          cleared,
-          $elm$core$Platform$Cmd$batch(
-            _List_fromArray(
-              [
-                $author$project$Main$clearViewer("rollback-" + requestId),
-                $author$project$Main$resourceRollbackCompleted(
-                  { pageIndex: $elm$core$Maybe$Nothing, requestId }
-                )
-              ]
-            )
-          )
-        );
-      }
-    }
-  );
   var $author$project$Main$authHttpCancelled = _Platform_outgoingPort("authHttpCancelled", $elm$json$Json$Encode$string);
   var $author$project$Main$authHttpRequested = _Platform_outgoingPort("authHttpRequested", $elm$core$Basics$identity);
   var $author$project$Main$authSourcesInvalidated = _Platform_outgoingPort(
@@ -19802,19 +19638,6 @@
     }
   );
   var $author$project$Main$setFullscreen = _Platform_outgoingPort("setFullscreen", $elm$json$Json$Encode$bool);
-  var $author$project$Model$ResourceSnapshot = function(a) {
-    return { $: "ResourceSnapshot", a };
-  };
-  var $author$project$Main$snapshotResource = function(model) {
-    return model.hasCommittedResource ? $elm$core$Maybe$Just(
-      $author$project$Model$ResourceSnapshot(
-        _Utils_update(
-          model,
-          { isViewerLoading: false, pendingPublicResource: $elm$core$Maybe$Nothing, resourceSnapshot: $elm$core$Maybe$Nothing }
-        )
-      )
-    ) : $elm$core$Maybe$Nothing;
-  };
   var $author$project$Auth$AwaitingPopup = { $: "AwaitingPopup" };
   var $author$project$Auth$AwaitingToken = { $: "AwaitingToken" };
   var $author$project$Auth$CancelFetch = function(a) {
@@ -22068,16 +21891,7 @@
               {
                 initialResourceSuperseded: true,
                 isViewerLoading: true,
-                pendingPublicResource: $elm$core$Maybe$Just(requestId),
-                resourceSnapshot: (function() {
-                  var _v4 = model.resourceSnapshot;
-                  if (_v4.$ === "Just") {
-                    var existing = _v4.a;
-                    return $elm$core$Maybe$Just(existing);
-                  } else {
-                    return $author$project$Main$snapshotResource(model);
-                  }
-                })()
+                pendingPublicResource: $elm$core$Maybe$Just(requestId)
               }
             ),
             A3(
@@ -22087,41 +21901,6 @@
               url
             )
           );
-        case "ClientReportedResourceReady":
-          var requestId = msg.a;
-          return requestId === "initial" || _Utils_eq(
-            model.pendingPublicResource,
-            $elm$core$Maybe$Just(requestId)
-          ) ? _Utils_Tuple2(
-            _Utils_update(
-              model,
-              { hasCommittedResource: true, pendingPublicResource: $elm$core$Maybe$Nothing, resourceSnapshot: $elm$core$Maybe$Nothing }
-            ),
-            $elm$core$Platform$Cmd$none
-          ) : _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
-        case "ClientReportedResourceFailed":
-          var requestId = msg.a;
-          if (requestId === "initial" || _Utils_eq(
-            model.pendingPublicResource,
-            $elm$core$Maybe$Just(requestId)
-          )) {
-            var _v5 = model.resourceSnapshot;
-            if (_v5.$ === "Just") {
-              return A2($author$project$Main$rollbackResource, requestId, model);
-            } else {
-              return _Utils_Tuple2(
-                _Utils_update(
-                  model,
-                  { isViewerLoading: false, pendingPublicResource: $elm$core$Maybe$Nothing }
-                ),
-                $author$project$Main$resourceRollbackCompleted(
-                  { pageIndex: model.selectedIndex, requestId }
-                )
-              );
-            }
-          } else {
-            return _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
-          }
         case "ClientNotifiedFullscreenChanged":
           var enabled = msg.a;
           return _Utils_Tuple2(
@@ -22148,18 +21927,18 @@
         case "ServerRespondedWithCollectionItem":
           var collectionId = msg.a;
           var result = msg.b;
-          var _v6 = model.resourceResponse;
-          if (_v6.$ === "ResourceLoadedCollection") {
-            var collectionState = _v6.a;
+          var _v4 = model.resourceResponse;
+          if (_v4.$ === "ResourceLoadedCollection") {
+            var collectionState = _v4.a;
             var nextLoadingIds = A2($elm$core$Set$remove, collectionId, collectionState.loadingCollectionIds);
             if (result.$ === "Ok") {
               var resource = result.a;
               if (resource.$ === "ResourceCollection") {
-                var _v9 = resource.a;
-                var fetchedCollection = _v9.b;
-                var _v10 = collectionState.collection;
-                var rootVersion = _v10.a;
-                var rootCollection = _v10.b;
+                var _v7 = resource.a;
+                var fetchedCollection = _v7.b;
+                var _v8 = collectionState.collection;
+                var rootVersion = _v8.a;
+                var rootCollection = _v8.b;
                 var nextCollection = A3($author$project$Main$replaceCollectionById, collectionId, fetchedCollection, rootCollection);
                 var nextState = _Utils_update(
                   collectionState,
@@ -22216,9 +21995,9 @@
         case "ServerRespondedWithManifestFromCollection":
           var manifestId = msg.a;
           var result = msg.b;
-          var _v11 = model.resourceResponse;
-          if (_v11.$ === "ResourceLoadedCollection") {
-            var collectionState = _v11.a;
+          var _v9 = model.resourceResponse;
+          if (_v9.$ === "ResourceLoadedCollection") {
+            var collectionState = _v9.a;
             if (!_Utils_eq(
               collectionState.selectedManifestId,
               $elm$core$Maybe$Just(manifestId)
@@ -22257,15 +22036,15 @@
               switch (resource.$) {
                 case "ResourceManifest":
                   var manifest = resource.a;
-                  var _v15 = A4(
+                  var _v13 = A4(
                     $author$project$Main$handleManifestLoaded,
                     "initial",
                     $elm$core$Maybe$Just(model.initialPage),
                     model,
                     manifest
                   );
-                  var nextModel = _v15.a;
-                  var cmd = _v15.b;
+                  var nextModel = _v13.a;
+                  var cmd = _v13.b;
                   return _Utils_Tuple2(
                     _Utils_update(
                       nextModel,
@@ -22291,9 +22070,9 @@
                     )
                   );
                 case "ResourceCollection":
-                  var _v16 = resource.a;
-                  var version = _v16.a;
-                  var collection = _v16.b;
+                  var _v14 = resource.a;
+                  var version = _v14.a;
+                  var collection = _v14.b;
                   return _Utils_Tuple2(
                     _Utils_update(
                       model,
@@ -22327,50 +22106,34 @@
                     )
                   );
                 default:
-                  var _v17 = A2($author$project$Main$rollbackResource, "initial", model);
-                  var restored = _v17.a;
-                  var rollbackCmd = _v17.b;
                   return _Utils_Tuple2(
-                    restored,
-                    $elm$core$Platform$Cmd$batch(
-                      _List_fromArray(
-                        [
-                          rollbackCmd,
-                          $author$project$Main$resourceLoadFailed(
-                            { message: "URL did not return a supported IIIF resource.", requestId: "initial", url: model.manifestUrl }
-                          )
-                        ]
-                      )
+                    _Utils_update(
+                      model,
+                      { isViewerLoading: false }
+                    ),
+                    $author$project$Main$resourceLoadFailed(
+                      { message: "URL did not return a supported IIIF resource.", requestId: "initial", url: model.manifestUrl }
                     )
                   );
               }
             } else {
               var err = result.a;
-              var _v18 = A2($author$project$Main$rollbackResource, "initial", model);
-              var restored = _v18.a;
-              var rollbackCmd = _v18.b;
               return _Utils_Tuple2(
                 _Utils_update(
-                  restored,
+                  model,
                   {
+                    isViewerLoading: false,
                     resourceResponse: $author$project$Model$ResourceFailed(
                       $author$project$Main$httpErrorToString(err)
                     )
                   }
                 ),
-                $elm$core$Platform$Cmd$batch(
-                  _List_fromArray(
-                    [
-                      rollbackCmd,
-                      $author$project$Main$resourceLoadFailed(
-                        {
-                          message: $author$project$Main$httpErrorToString(err),
-                          requestId: "initial",
-                          url: model.manifestUrl
-                        }
-                      )
-                    ]
-                  )
+                $author$project$Main$resourceLoadFailed(
+                  {
+                    message: $author$project$Main$httpErrorToString(err),
+                    requestId: "initial",
+                    url: model.manifestUrl
+                  }
                 )
               );
             }
@@ -22390,15 +22153,16 @@
               switch (resource.$) {
                 case "ResourceManifest":
                   var manifest = resource.a;
-                  var _v21 = A4($author$project$Main$handleManifestLoaded, requestId, $elm$core$Maybe$Nothing, model, manifest);
-                  var nextModel = _v21.a;
-                  var cmd = _v21.b;
+                  var _v17 = A4($author$project$Main$handleManifestLoaded, requestId, $elm$core$Maybe$Nothing, model, manifest);
+                  var nextModel = _v17.a;
+                  var cmd = _v17.b;
                   return _Utils_Tuple2(
                     _Utils_update(
                       nextModel,
                       {
                         collectionSidebarVisible: false,
                         manifestUrl: url,
+                        pendingPublicResource: $elm$core$Maybe$Nothing,
                         resourceResponse: $author$project$Model$ResourceLoadedManifest(manifest)
                       }
                     ),
@@ -22419,9 +22183,9 @@
                     )
                   );
                 case "ResourceCollection":
-                  var _v22 = resource.a;
-                  var version = _v22.a;
-                  var collection = _v22.b;
+                  var _v18 = resource.a;
+                  var version = _v18.a;
+                  var collection = _v18.b;
                   return _Utils_Tuple2(
                     _Utils_update(
                       model,
@@ -22431,6 +22195,7 @@
                         isViewerLoading: false,
                         manifestUrl: url,
                         pages: _List_Nil,
+                        pendingPublicResource: $elm$core$Maybe$Nothing,
                         resourceResponse: $author$project$Model$ResourceLoadedCollection(
                           {
                             collection: A2($rism_digital$elm_iiif$IIIF$Presentation$IIIFCollection, version, collection),
@@ -22456,51 +22221,37 @@
                     )
                   );
                 default:
-                  var _v23 = A2($author$project$Main$rollbackResource, requestId, model);
-                  var restored = _v23.a;
-                  var rollbackCmd = _v23.b;
                   return _Utils_Tuple2(
-                    restored,
-                    $elm$core$Platform$Cmd$batch(
-                      _List_fromArray(
-                        [
-                          rollbackCmd,
-                          $author$project$Main$resourceLoadFailed(
-                            { message: "URL did not return a supported IIIF resource.", requestId, url }
-                          )
-                        ]
-                      )
+                    _Utils_update(
+                      model,
+                      { isViewerLoading: false, pendingPublicResource: $elm$core$Maybe$Nothing }
+                    ),
+                    $author$project$Main$resourceLoadFailed(
+                      { message: "URL did not return a supported IIIF resource.", requestId, url }
                     )
                   );
               }
             } else {
               var err = result.a;
-              var _v24 = A2($author$project$Main$rollbackResource, requestId, model);
-              var restored = _v24.a;
-              var rollbackCmd = _v24.b;
               return _Utils_Tuple2(
-                restored,
-                $elm$core$Platform$Cmd$batch(
-                  _List_fromArray(
-                    [
-                      rollbackCmd,
-                      $author$project$Main$resourceLoadFailed(
-                        {
-                          message: $author$project$Main$httpErrorToString(err),
-                          requestId,
-                          url
-                        }
-                      )
-                    ]
-                  )
+                _Utils_update(
+                  model,
+                  { isViewerLoading: false, pendingPublicResource: $elm$core$Maybe$Nothing }
+                ),
+                $author$project$Main$resourceLoadFailed(
+                  {
+                    message: $author$project$Main$httpErrorToString(err),
+                    requestId,
+                    url
+                  }
                 )
               );
             }
           }
         case "UserAppliedFilterJson":
-          var _v25 = $author$project$Filters$decodeFilterJson(model.filtersJsonInput);
-          if (_v25.$ === "Ok") {
-            var filters = _v25.a;
+          var _v19 = $author$project$Filters$decodeFilterJson(model.filtersJsonInput);
+          if (_v19.$ === "Ok") {
+            var filters = _v19.a;
             var json = $author$project$Filters$encodeActiveFilters(filters);
             var nextModel = _Utils_update(
               model,
@@ -22511,7 +22262,7 @@
               $author$project$Main$sendPageViewPreview(nextModel)
             );
           } else {
-            var err = _v25.a;
+            var err = _v19.a;
             return _Utils_Tuple2(
               _Utils_update(
                 model,
@@ -22525,9 +22276,9 @@
         case "UserChangedZoomLevel":
           var zoom = msg.a;
           var nextInitialZoom = (function() {
-            var _v26 = model.initialZoom;
-            if (_v26.$ === "Just") {
-              var initialZoom = _v26.a;
+            var _v20 = model.initialZoom;
+            if (_v20.$ === "Just") {
+              var initialZoom = _v20.a;
               return $elm$core$Maybe$Just(initialZoom);
             } else {
               return $elm$core$Maybe$Just(zoom);
@@ -22562,13 +22313,13 @@
           );
         case "UserClickedCollectionItem":
           var collectionId = msg.a;
-          var _v27 = model.resourceResponse;
-          if (_v27.$ === "ResourceLoadedCollection") {
-            var collectionState = _v27.a;
+          var _v21 = model.resourceResponse;
+          if (_v21.$ === "ResourceLoadedCollection") {
+            var collectionState = _v21.a;
             var isExpanded = A2($elm$core$Set$member, collectionId, collectionState.expandedIds);
             var nextExpandedIds = isExpanded ? A2($elm$core$Set$remove, collectionId, collectionState.expandedIds) : A2($elm$core$Set$insert, collectionId, collectionState.expandedIds);
-            var _v28 = collectionState.collection;
-            var rootCollection = _v28.b;
+            var _v22 = collectionState.collection;
+            var rootCollection = _v22.b;
             var isItemsEmpty = A2(
               $elm$core$Maybe$withDefault,
               true,
@@ -22610,9 +22361,9 @@
         case "UserClickedManifestItem":
           var manifestId = msg.a;
           var manifestUrl = msg.b;
-          var _v29 = model.resourceResponse;
-          if (_v29.$ === "ResourceLoadedCollection") {
-            var collectionState = _v29.a;
+          var _v23 = model.resourceResponse;
+          if (_v23.$ === "ResourceLoadedCollection") {
+            var collectionState = _v23.a;
             return _Utils_Tuple2(
               _Utils_update(
                 model,
@@ -22676,8 +22427,7 @@
         case "UserClickedPageViewPrev":
           return A2($author$project$Main$handlePageViewStep, -1, model);
         case "UserClickedRange":
-          var rangeId = msg.a;
-          var maybeIndex = msg.b;
+          var maybeIndex = msg.a;
           var scrollCmd = (function() {
             if (maybeIndex.$ === "Just") {
               var index2 = maybeIndex.a;
@@ -22698,7 +22448,6 @@
                   return model.selectedIndex;
                 }
               })(),
-              selectedRangeId: $elm$core$Maybe$Just(rangeId),
               sidebarState: $author$project$Main$visibleSidebarState(model),
               thumbsInstantScroll: true
             }
@@ -22761,9 +22510,9 @@
           );
         case "UserDraggedCollectionSidebarResize":
           var clientX = msg.a;
-          var _v32 = model.collectionSidebarDrag;
-          if (_v32.$ === "Just") {
-            var drag = _v32.a;
+          var _v26 = model.collectionSidebarDrag;
+          if (_v26.$ === "Just") {
+            var drag = _v26.a;
             var nextWidth = A3($elm$core$Basics$clamp, 240, 480, drag.startWidth + (clientX - drag.startX));
             return _Utils_Tuple2(
               _Utils_update(
@@ -22777,9 +22526,9 @@
           }
         case "UserDraggedSidebarResize":
           var clientX = msg.a;
-          var _v33 = model.sidebarDrag;
-          if (_v33.$ === "Just") {
-            var drag = _v33.a;
+          var _v27 = model.sidebarDrag;
+          if (_v27.$ === "Just") {
+            var drag = _v27.a;
             var delta = drag.startX - clientX;
             var nextWidth = A3($elm$core$Basics$clamp, 220, 520, drag.startWidth + delta);
             return _Utils_Tuple2(
@@ -22874,8 +22623,8 @@
             $elm$core$Platform$Cmd$none
           );
         case "UserToggledCollectionSidebar":
-          var _v34 = model.resourceResponse;
-          if (_v34.$ === "ResourceLoadedCollection") {
+          var _v28 = model.resourceResponse;
+          if (_v28.$ === "ResourceLoadedCollection") {
             return _Utils_Tuple2(
               _Utils_update(
                 model,
@@ -22941,9 +22690,23 @@
             ),
             $elm$core$Platform$Cmd$none
           );
+        case "UserToggledRangeMetadata":
+          var rangeId = msg.a;
+          return _Utils_Tuple2(
+            _Utils_update(
+              model,
+              {
+                selectedRangeId: _Utils_eq(
+                  model.selectedRangeId,
+                  $elm$core$Maybe$Just(rangeId)
+                ) ? $elm$core$Maybe$Nothing : $elm$core$Maybe$Just(rangeId)
+              }
+            ),
+            $elm$core$Platform$Cmd$none
+          );
         case "UserToggledShiftByOne":
-          var _v35 = model.viewMode;
-          if (_v35.$ === "OneUp") {
+          var _v29 = model.viewMode;
+          if (_v29.$ === "OneUp") {
             return _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
           } else {
             var nextShift = !model.shiftByOne;
@@ -22985,14 +22748,14 @@
           );
         case "UserToggledThumbnails":
           var thumbCmd = (function() {
-            var _v37 = _Utils_Tuple2(model.pendingThumbScroll, model.selectedIndex);
-            if (_v37.a.$ === "Just") {
-              var index2 = _v37.a.a;
+            var _v31 = _Utils_Tuple2(model.pendingThumbScroll, model.selectedIndex);
+            if (_v31.a.$ === "Just") {
+              var index2 = _v31.a.a;
               return A2($author$project$Main$scrollThumbsToIndex, true, index2);
             } else {
-              if (_v37.b.$ === "Just") {
-                var _v38 = _v37.a;
-                var index2 = _v37.b.a;
+              if (_v31.b.$ === "Just") {
+                var _v32 = _v31.a;
+                var index2 = _v31.b.a;
                 return A2($author$project$Main$scrollThumbsToIndex, true, index2);
               } else {
                 return $elm$core$Platform$Cmd$none;
@@ -23004,8 +22767,8 @@
             { sidebarPanel: $author$project$Model$SidebarThumbnails, sidebarState: $author$project$Model$SidebarThumbnails }
           );
           var nextInstant = (function() {
-            var _v36 = model.pendingThumbScroll;
-            if (_v36.$ === "Just") {
+            var _v30 = model.pendingThumbScroll;
+            if (_v30.$ === "Just") {
               return true;
             } else {
               return false;
@@ -23020,8 +22783,8 @@
           );
         case "UserToggledTwoUp":
           var nextMode = (function() {
-            var _v39 = model.viewMode;
-            if (_v39.$ === "OneUp") {
+            var _v33 = model.viewMode;
+            if (_v33.$ === "OneUp") {
               return $author$project$Model$TwoUp;
             } else {
               return $author$project$Model$OneUp;
@@ -23092,9 +22855,7 @@
           );
         default:
           var width = msg.a;
-          var height = msg.b;
-          var shortSide = A2($elm$core$Basics$min, width, height);
-          var nextIsMobile = _Utils_cmp(shortSide, $author$project$Main$mobileShortSideBreakpoint) < 1;
+          var nextIsMobile = _Utils_cmp(width, $author$project$Main$mobileWidthBreakpoint) < 1;
           var nextModel = nextIsMobile ? _Utils_update(
             model,
             { isMobile: true, mobileSidebarOpen: false, sidebarState: $author$project$Model$SidebarHidden }
@@ -23132,6 +22893,24 @@
   };
   var $elm$virtual_dom$VirtualDom$lazy5 = _VirtualDom_lazy5;
   var $elm$html$Html$Lazy$lazy5 = $elm$virtual_dom$VirtualDom$lazy5;
+  var $author$project$Model$currentManifest = function(model) {
+    var _v0 = model.resourceResponse;
+    switch (_v0.$) {
+      case "ResourceLoadedManifest":
+        var manifest = _v0.a;
+        return $elm$core$Maybe$Just(manifest);
+      case "ResourceLoadedCollection":
+        var _v1 = model.response;
+        if (_v1.$ === "Loaded") {
+          var manifest = _v1.a;
+          return $elm$core$Maybe$Just(manifest);
+        } else {
+          return $elm$core$Maybe$Nothing;
+        }
+      default:
+        return $elm$core$Maybe$Nothing;
+    }
+  };
   var $rism_digital$elm_iiif$IIIF$Presentation$toLabel = $rism_digital$elm_iiif$IIIF$Presentation$withManifest(
     function($) {
       return $.label;
@@ -23303,7 +23082,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("throbber-overlay")
+          $elm$html$Html$Attributes$class("diva-throbber-overlay")
         ]
       ),
       _List_fromArray(
@@ -23312,7 +23091,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("throbber")
+                $elm$html$Html$Attributes$class("diva-throbber")
               ]
             ),
             A2(
@@ -23322,7 +23101,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("throbber-cube"),
+                      $elm$html$Html$Attributes$class("diva-throbber-cube"),
                       A2(
                         $elm$html$Html$Attributes$style,
                         "animation-delay",
@@ -23348,7 +23127,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("viewer-status-overlay")
+          $elm$html$Html$Attributes$class("diva-viewer-status-overlay")
         ]
       ),
       _List_fromArray(
@@ -23357,7 +23136,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal is-narrow")
+                $elm$html$Html$Attributes$class("diva-modal is-narrow")
               ]
             ),
             _List_fromArray(
@@ -23366,7 +23145,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("modal-header")
+                      $elm$html$Html$Attributes$class("diva-modal-header")
                     ]
                   ),
                   _List_fromArray(
@@ -23375,7 +23154,7 @@
                         $elm$html$Html$div,
                         _List_fromArray(
                           [
-                            $elm$html$Html$Attributes$class("modal-title")
+                            $elm$html$Html$Attributes$class("diva-modal-title")
                           ]
                         ),
                         _List_fromArray(
@@ -23391,7 +23170,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("modal-body is-no-sidebar")
+                      $elm$html$Html$Attributes$class("diva-modal-body is-no-sidebar")
                     ]
                   ),
                   _List_fromArray(
@@ -23403,7 +23182,7 @@
                             $elm$html$Html$Attributes$classList(
                               _List_fromArray(
                                 [
-                                  _Utils_Tuple2("status", true),
+                                  _Utils_Tuple2("diva-status", true),
                                   _Utils_Tuple2("is-error", isError)
                                 ]
                               )
@@ -23431,7 +23210,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("viewer-zoom-indicator")
+          $elm$html$Html$Attributes$class("diva-viewer-zoom-indicator")
         ]
       ),
       _List_fromArray(
@@ -23492,7 +23271,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("collection-resizer", true),
+                  _Utils_Tuple2("diva-collection-resizer", true),
                   _Utils_Tuple2("is-hidden", !model.collectionSidebarVisible)
                 ]
               )
@@ -23545,8 +23324,8 @@
                   $elm$html$Html$Attributes$classList(
                     _List_fromArray(
                       [
-                        _Utils_Tuple2("manifest-tree-item", true),
-                        _Utils_Tuple2("ui-button", true),
+                        _Utils_Tuple2("diva-manifest-tree-item", true),
+                        _Utils_Tuple2("diva-ui-button", true),
                         _Utils_Tuple2("is-active", isActive)
                       ]
                     )
@@ -23585,7 +23364,7 @@
         $elm$html$Html$ul,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("collection-list list-reset")
+            $elm$html$Html$Attributes$class("diva-collection-list diva-list-reset")
           ]
         ),
         A2(
@@ -23610,7 +23389,7 @@
                 $elm$html$Html$div,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("contents-empty")
+                    $elm$html$Html$Attributes$class("diva-contents-empty")
                   ]
                 ),
                 _List_fromArray(
@@ -23634,7 +23413,7 @@
         $elm$html$Html$li,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("collection-tree-item")
+            $elm$html$Html$Attributes$class("diva-collection-tree-item")
           ]
         ),
         A2(
@@ -23643,7 +23422,7 @@
             $elm$html$Html$button,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("collection-node-button ui-button"),
+                $elm$html$Html$Attributes$class("diva-collection-node-button diva-ui-button"),
                 $elm$html$Html$Attributes$type_("button"),
                 $elm$html$Html$Events$onClick(
                   $author$project$Msg$UserClickedCollectionItem(collection.id)
@@ -23656,7 +23435,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("collection-expand-icon")
+                      $elm$html$Html$Attributes$class("diva-collection-expand-icon")
                     ]
                   ),
                   _List_fromArray(
@@ -23686,7 +23465,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("collection-panel", true),
+                  _Utils_Tuple2("diva-collection-panel", true),
                   _Utils_Tuple2("is-fullscreen", model.fullscreen),
                   _Utils_Tuple2("is-hidden", !model.collectionSidebarVisible)
                 ]
@@ -23705,7 +23484,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("collection-header")
+                  $elm$html$Html$Attributes$class("diva-collection-header")
                 ]
               ),
               _List_fromArray(
@@ -23714,7 +23493,7 @@
                     $elm$html$Html$div,
                     _List_fromArray(
                       [
-                        $elm$html$Html$Attributes$class("collection-title")
+                        $elm$html$Html$Attributes$class("diva-collection-title")
                       ]
                     ),
                     _List_fromArray(
@@ -23730,7 +23509,7 @@
                         $elm$html$Html$div,
                         _List_fromArray(
                           [
-                            $elm$html$Html$Attributes$class("collection-summary")
+                            $elm$html$Html$Attributes$class("diva-collection-summary")
                           ]
                         ),
                         _List_fromArray(
@@ -23751,7 +23530,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("sidebar-content")
+                  $elm$html$Html$Attributes$class("diva-sidebar-content")
                 ]
               ),
               _List_fromArray(
@@ -23760,7 +23539,7 @@
                     $elm$html$Html$div,
                     _List_fromArray(
                       [
-                        $elm$html$Html$Attributes$class("sidebar-pane is-scroll")
+                        $elm$html$Html$Attributes$class("diva-sidebar-pane is-scroll")
                       ]
                     ),
                     _List_fromArray(
@@ -27967,7 +27746,7 @@
                   $elm$html$Html$img,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("manifest-info-logo"),
+                      $elm$html$Html$Attributes$class("diva-manifest-info-logo"),
                       $elm$html$Html$Attributes$src(url),
                       $elm$html$Html$Attributes$alt("Manifest logo")
                     ]
@@ -28011,7 +27790,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("metadata-item")
+          $elm$html$Html$Attributes$class("diva-metadata-item")
         ]
       ),
       _List_fromArray(
@@ -28020,7 +27799,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("metadata-label")
+                $elm$html$Html$Attributes$class("diva-metadata-label")
               ]
             ),
             _List_fromArray(
@@ -28033,7 +27812,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("metadata-value")
+                $elm$html$Html$Attributes$class("diva-metadata-value")
               ]
             ),
             _List_fromArray(
@@ -28071,7 +27850,7 @@
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("modal-body is-two-column")
+            $elm$html$Html$Attributes$class("diva-modal-body is-two-column")
           ]
         ),
         _List_fromArray(
@@ -28080,7 +27859,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("metadata-body")
+                  $elm$html$Html$Attributes$class("diva-metadata-body")
                 ]
               ),
               A2($elm$core$List$map, $author$project$View$ManifestInfoModal$viewRow, rows)
@@ -28089,7 +27868,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("manifest-info-logo-wrap")
+                  $elm$html$Html$Attributes$class("diva-manifest-info-logo-wrap")
                 ]
               ),
               _List_fromArray(
@@ -28158,7 +27937,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("canvas-toolbar-button", true),
+                  _Utils_Tuple2("diva-canvas-toolbar-button", true),
                   _Utils_Tuple2("is-disabled", isDisabled),
                   _Utils_Tuple2("is-fullscreen", config.isFullscreen)
                 ]
@@ -28188,7 +27967,7 @@
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("canvas-toolbar-item"),
+            $elm$html$Html$Attributes$class("diva-canvas-toolbar-item"),
             A2($elm$html$Html$Attributes$attribute, "data-tooltip", config.label)
           ]
         ),
@@ -28215,7 +27994,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("modal-header")
+          $elm$html$Html$Attributes$class("diva-modal-header")
         ]
       ),
       _List_fromArray(
@@ -28224,7 +28003,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal-title")
+                $elm$html$Html$Attributes$class("diva-modal-title")
               ]
             ),
             _List_fromArray(
@@ -28237,7 +28016,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal-actions")
+                $elm$html$Html$Attributes$class("diva-modal-actions")
               ]
             ),
             _List_fromArray(
@@ -28246,7 +28025,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("modal-close-action")
+                      $elm$html$Html$Attributes$class("diva-modal-close-action")
                     ]
                   ),
                   _List_fromArray(
@@ -28274,7 +28053,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("modal-overlay")
+          $elm$html$Html$Attributes$class("diva-modal-overlay")
         ]
       ),
       _List_fromArray(
@@ -28283,7 +28062,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal is-narrow")
+                $elm$html$Html$Attributes$class("diva-modal is-narrow")
               ]
             ),
             _List_fromArray(
@@ -28376,9 +28155,9 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("page-view-choice", true),
-                  _Utils_Tuple2("ui-card", true),
-                  _Utils_Tuple2("ui-card--dark", true),
+                  _Utils_Tuple2("diva-page-view-choice", true),
+                  _Utils_Tuple2("diva-ui-card", true),
+                  _Utils_Tuple2("diva-ui-card--dark", true),
                   _Utils_Tuple2("is-active", isActive)
                 ]
               )
@@ -28399,7 +28178,7 @@
                   $elm$html$Html$img,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("page-view-choice-thumb"),
+                      $elm$html$Html$Attributes$class("diva-page-view-choice-thumb"),
                       $elm$html$Html$Attributes$src(image.thumbUrl),
                       $elm$html$Html$Attributes$alt(image.label),
                       A2($elm$html$Html$Attributes$attribute, "loading", "lazy"),
@@ -28413,7 +28192,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("page-view-choice-thumb page-view-choice-thumb--protected"),
+                      $elm$html$Html$Attributes$class("diva-page-view-choice-thumb diva-page-view-choice-thumb--protected"),
                       A2($elm$html$Html$Attributes$attribute, "aria-label", "Protected image")
                     ]
                   ),
@@ -28425,7 +28204,7 @@
               $elm$html$Html$span,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("page-view-choice-label")
+                  $elm$html$Html$Attributes$class("diva-page-view-choice-label")
                 ]
               ),
               _List_fromArray(
@@ -28445,7 +28224,7 @@
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("page-view-choices")
+            $elm$html$Html$Attributes$class("diva-page-view-choices")
           ]
         ),
         A2(
@@ -28532,7 +28311,7 @@
         $elm$html$Html$input,
         A2(
           $elm$core$List$cons,
-          $elm$html$Html$Attributes$class("filter-range-input"),
+          $elm$html$Html$Attributes$class("diva-filter-range-input"),
           attrs
         ),
         _List_Nil
@@ -28544,7 +28323,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("filter-range-group")
+          $elm$html$Html$Attributes$class("diva-filter-range-group")
         ]
       ),
       _List_fromArray(
@@ -28553,7 +28332,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("filter-range-header")
+                $elm$html$Html$Attributes$class("diva-filter-range-header")
               ]
             ),
             _List_fromArray(
@@ -28562,7 +28341,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-label")
+                      $elm$html$Html$Attributes$class("diva-filter-label")
                     ]
                   ),
                   _List_fromArray(
@@ -28575,7 +28354,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-value")
+                      $elm$html$Html$Attributes$class("diva-filter-value")
                     ]
                   ),
                   _List_fromArray(
@@ -28618,7 +28397,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("filter-range-group")
+          $elm$html$Html$Attributes$class("diva-filter-range-group")
         ]
       ),
       _List_fromArray(
@@ -28627,7 +28406,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("filter-range-header")
+                $elm$html$Html$Attributes$class("diva-filter-range-header")
               ]
             ),
             _List_fromArray(
@@ -28636,7 +28415,7 @@
                   $elm$html$Html$label,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-toggle is-inline")
+                      $elm$html$Html$Attributes$class("diva-filter-toggle is-inline")
                     ]
                   ),
                   _List_fromArray(
@@ -28662,7 +28441,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-value")
+                      $elm$html$Html$Attributes$class("diva-filter-value")
                     ]
                   ),
                   _List_fromArray(
@@ -28760,7 +28539,7 @@
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("filter-group")
+            $elm$html$Html$Attributes$class("diva-filter-group")
           ]
         ),
         A2(
@@ -28772,7 +28551,7 @@
                 $elm$html$Html$Attributes$classList(
                   _List_fromArray(
                     [
-                      _Utils_Tuple2("filter-title-button", true),
+                      _Utils_Tuple2("diva-filter-title-button", true),
                       _Utils_Tuple2("is-collapsed", !isExpanded)
                     ]
                   )
@@ -28791,7 +28570,7 @@
                       $elm$html$Html$Attributes$classList(
                         _List_fromArray(
                           [
-                            _Utils_Tuple2("filter-title-icon", true),
+                            _Utils_Tuple2("diva-filter-title-icon", true),
                             _Utils_Tuple2("is-expanded", isExpanded)
                           ]
                         )
@@ -28822,7 +28601,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("filter-row")
+          $elm$html$Html$Attributes$class("diva-filter-row")
         ]
       ),
       items
@@ -28843,7 +28622,7 @@
                 $elm$html$Html$button,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("filter-reset"),
+                    $elm$html$Html$Attributes$class("diva-filter-reset"),
                     $elm$html$Html$Attributes$type_("button"),
                     $elm$html$Html$Events$onClick($author$project$Msg$UserResetAltColourAdjust)
                   ]
@@ -29079,7 +28858,7 @@
         $elm$html$Html$select,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("filter-select"),
+            $elm$html$Html$Attributes$class("diva-filter-select"),
             $elm$html$Html$Events$onInput(onChange),
             $elm$html$Html$Attributes$value(currentValue)
           ]
@@ -29094,7 +28873,7 @@
         $elm$html$Html$label,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("filter-toggle")
+            $elm$html$Html$Attributes$class("diva-filter-toggle")
           ]
         ),
         _List_fromArray(
@@ -29333,7 +29112,7 @@
     return A4(
       $author$project$View$PageViewModal$viewFilterGroup,
       model,
-      "filter-json",
+      "diva-filter-json",
       "Import / Export Filter Settings",
       _List_fromArray(
         [
@@ -29344,7 +29123,7 @@
                   $elm$html$Html$button,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-reset"),
+                      $elm$html$Html$Attributes$class("diva-filter-reset"),
                       $elm$html$Html$Attributes$type_("button"),
                       $elm$html$Html$Events$onClick($author$project$Msg$UserCopiedFilterJson)
                     ]
@@ -29359,7 +29138,7 @@
                   $elm$html$Html$button,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-reset"),
+                      $elm$html$Html$Attributes$class("diva-filter-reset"),
                       $elm$html$Html$Attributes$type_("button"),
                       $elm$html$Html$Events$onClick($author$project$Msg$UserAppliedFilterJson)
                     ]
@@ -29377,7 +29156,7 @@
             $elm$html$Html$textarea,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("filter-json"),
+                $elm$html$Html$Attributes$class("diva-filter-json"),
                 $elm$html$Html$Attributes$value(model.filtersJsonInput),
                 $elm$html$Html$Events$onInput($author$project$Msg$UserUpdatedFilterJsonInput),
                 $elm$html$Html$Attributes$rows(6)
@@ -29393,7 +29172,7 @@
                 $elm$html$Html$div,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("filter-json-error")
+                    $elm$html$Html$Attributes$class("diva-filter-json-error")
                   ]
                 ),
                 _List_fromArray(
@@ -29711,7 +29490,7 @@
         $elm$html$Html$input,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("filter-color-input"),
+            $elm$html$Html$Attributes$class("diva-filter-color-input"),
             $elm$html$Html$Attributes$type_("color"),
             $elm$html$Html$Attributes$value(colourValue),
             $elm$html$Html$Events$onInput(onChange)
@@ -29789,7 +29568,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-label")
+                      $elm$html$Html$Attributes$class("diva-filter-label")
                     ]
                   ),
                   _List_fromArray(
@@ -29807,7 +29586,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-label")
+                      $elm$html$Html$Attributes$class("diva-filter-label")
                     ]
                   ),
                   _List_fromArray(
@@ -29929,7 +29708,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("filter-range-group")
+          $elm$html$Html$Attributes$class("diva-filter-range-group")
         ]
       ),
       _List_fromArray(
@@ -29938,7 +29717,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("filter-range-header")
+                $elm$html$Html$Attributes$class("diva-filter-range-header")
               ]
             ),
             _List_fromArray(
@@ -29947,7 +29726,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-label")
+                      $elm$html$Html$Attributes$class("diva-filter-label")
                     ]
                   ),
                   _List_fromArray(
@@ -29960,7 +29739,7 @@
                   $elm$html$Html$span,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("filter-range-header-right")
+                      $elm$html$Html$Attributes$class("diva-filter-range-header-right")
                     ]
                   ),
                   _List_fromArray(
@@ -29969,7 +29748,7 @@
                         $elm$html$Html$span,
                         _List_fromArray(
                           [
-                            $elm$html$Html$Attributes$class("filter-value")
+                            $elm$html$Html$Attributes$class("diva-filter-value")
                           ]
                         ),
                         _List_fromArray(
@@ -29984,7 +29763,7 @@
                         $elm$html$Html$button,
                         _List_fromArray(
                           [
-                            $elm$html$Html$Attributes$class("filter-reset"),
+                            $elm$html$Html$Attributes$class("diva-filter-reset"),
                             $elm$html$Html$Attributes$type_("button"),
                             $elm$html$Html$Events$onClick(
                               A2($author$project$Msg$UserUpdatedFilterInt, $author$project$Filters$IntRotation, "0")
@@ -30034,7 +29813,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("modal-sidebar")
+          $elm$html$Html$Attributes$class("diva-modal-sidebar")
         ]
       ),
       _List_fromArray(
@@ -30063,7 +29842,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("modal-viewer", true),
+                  _Utils_Tuple2("diva-modal-viewer", true),
                   _Utils_Tuple2("is-fullscreen", fullscreen),
                   _Utils_Tuple2("is-outer-left", isOuterLeft)
                 ]
@@ -30077,7 +29856,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("modal-canvas"),
+                  $elm$html$Html$Attributes$class("diva-modal-canvas"),
                   $elm$html$Html$Attributes$id("filter-viewer")
                 ]
               ),
@@ -30114,7 +29893,7 @@
           $elm$html$Html$Attributes$classList(
             _List_fromArray(
               [
-                _Utils_Tuple2("modal-body", true),
+                _Utils_Tuple2("diva-modal-body", true),
                 _Utils_Tuple2("is-no-gap", true),
                 _Utils_Tuple2("is-fullscreen", model.pageViewFullscreen),
                 _Utils_Tuple2("is-with-choices", hasChoices),
@@ -30267,7 +30046,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("modal-header")
+          $elm$html$Html$Attributes$class("diva-modal-header")
         ]
       ),
       _List_fromArray(
@@ -30276,7 +30055,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal-title-stack")
+                $elm$html$Html$Attributes$class("diva-modal-title-stack")
               ]
             ),
             A2(
@@ -30285,7 +30064,7 @@
                 $elm$html$Html$div,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("modal-title")
+                    $elm$html$Html$Attributes$class("diva-modal-title")
                   ]
                 ),
                 _List_fromArray(
@@ -30301,7 +30080,7 @@
                       $elm$html$Html$div,
                       _List_fromArray(
                         [
-                          $elm$html$Html$Attributes$class("modal-subtitle")
+                          $elm$html$Html$Attributes$class("diva-modal-subtitle")
                         ]
                       ),
                       _List_fromArray(
@@ -30318,7 +30097,7 @@
                       $elm$html$Html$div,
                       _List_fromArray(
                         [
-                          $elm$html$Html$Attributes$class("modal-subtitle is-muted")
+                          $elm$html$Html$Attributes$class("diva-modal-subtitle is-muted")
                         ]
                       ),
                       _List_fromArray(
@@ -30336,7 +30115,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("modal-actions")
+                $elm$html$Html$Attributes$class("diva-modal-actions")
               ]
             ),
             _List_fromArray(
@@ -30393,7 +30172,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("modal-close-action")
+                      $elm$html$Html$Attributes$class("diva-modal-close-action")
                     ]
                   ),
                   _List_fromArray(
@@ -30424,7 +30203,7 @@
           $elm$html$Html$Attributes$classList(
             _List_fromArray(
               [
-                _Utils_Tuple2("modal-overlay", true),
+                _Utils_Tuple2("diva-modal-overlay", true),
                 _Utils_Tuple2("is-fullscreen", model.pageViewFullscreen)
               ]
             )
@@ -30440,7 +30219,7 @@
                 $elm$html$Html$Attributes$classList(
                   _List_fromArray(
                     [
-                      _Utils_Tuple2("modal", true),
+                      _Utils_Tuple2("diva-modal", true),
                       _Utils_Tuple2("is-fullscreen", model.pageViewFullscreen),
                       _Utils_Tuple2("is-page-view", !model.pageViewFullscreen)
                     ]
@@ -30464,7 +30243,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("required-statement")
+          $elm$html$Html$Attributes$class("diva-required-statement")
         ]
       ),
       $author$project$View$HtmlRenderer$renderHtml(valueText)
@@ -30496,7 +30275,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("contents-empty")
+          $elm$html$Html$Attributes$class("diva-contents-empty")
         ]
       ),
       _List_fromArray(
@@ -30507,21 +30286,6 @@
     );
   };
   var $author$project$View$Sidebar$viewContentsEmptyBody = $author$project$View$Sidebar$viewContentsEmpty("No contents available.");
-  var $author$project$View$Sidebar$currentCanvasId = function(model) {
-    return A2(
-      $elm$core$Maybe$map,
-      function($) {
-        return $.canvasId;
-      },
-      A2(
-        $elm$core$Maybe$andThen,
-        function(index) {
-          return A2($author$project$Model$getPageAt, index, model.pages);
-        },
-        model.selectedIndex
-      )
-    );
-  };
   var $author$project$View$Sidebar$lookupRangeIndex = F2(
     function(rangeIndexMap, rangeId) {
       return A2(
@@ -30551,13 +30315,11 @@
       }
     }
   );
-  var $author$project$Msg$UserClickedRange = F2(
-    function(a, b) {
-      return { $: "UserClickedRange", a, b };
-    }
-  );
-  var $author$project$View$Sidebar$viewRangeButton = F4(
-    function(isCurrent, rangeId, maybeIndex, labelText) {
+  var $author$project$Msg$UserClickedRange = function(a) {
+    return { $: "UserClickedRange", a };
+  };
+  var $author$project$View$Sidebar$viewRangeButton = F3(
+    function(isCurrent, maybeIndex, labelText) {
       return A2(
         $elm$html$Html$button,
         _Utils_ap(
@@ -30566,15 +30328,15 @@
               $elm$html$Html$Attributes$classList(
                 _List_fromArray(
                   [
-                    _Utils_Tuple2("contents-button", true),
-                    _Utils_Tuple2("ui-button", true),
+                    _Utils_Tuple2("diva-contents-button", true),
+                    _Utils_Tuple2("diva-ui-button", true),
                     _Utils_Tuple2("is-current", isCurrent)
                   ]
                 )
               ),
               $elm$html$Html$Attributes$type_("button"),
               $elm$html$Html$Events$onClick(
-                A2($author$project$Msg$UserClickedRange, rangeId, maybeIndex)
+                $author$project$Msg$UserClickedRange(maybeIndex)
               )
             ]
           ),
@@ -30592,13 +30354,52 @@
       );
     }
   );
+  var $author$project$Msg$UserToggledRangeMetadata = function(a) {
+    return { $: "UserToggledRangeMetadata", a };
+  };
+  var $author$project$View$Sidebar$viewRangeDisclosure = F3(
+    function(isExpanded, rangeId, labelText) {
+      return A2(
+        $elm$html$Html$button,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-disclosure diva-ui-button"),
+            $elm$html$Html$Attributes$type_("button"),
+            A2(
+              $elm$html$Html$Attributes$attribute,
+              "aria-expanded",
+              isExpanded ? "true" : "false"
+            ),
+            A2(
+              $elm$html$Html$Attributes$attribute,
+              "aria-label",
+              _Utils_ap(
+                isExpanded ? "Hide information for " : "Show information for ",
+                labelText
+              )
+            ),
+            $elm$html$Html$Events$onClick(
+              $author$project$Msg$UserToggledRangeMetadata(rangeId)
+            )
+          ]
+        ),
+        _List_fromArray(
+          [
+            $elm$html$Html$text(
+              isExpanded ? "\u25BE" : "\u25B8"
+            )
+          ]
+        )
+      );
+    }
+  );
   var $author$project$View$Sidebar$metadataEntry = F2(
     function(language, entry) {
       return A2(
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("metadata-item")
+            $elm$html$Html$Attributes$class("diva-metadata-item")
           ]
         ),
         _List_fromArray(
@@ -30607,7 +30408,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("metadata-label")
+                  $elm$html$Html$Attributes$class("diva-metadata-label")
                 ]
               ),
               _List_fromArray(
@@ -30622,7 +30423,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("metadata-value")
+                  $elm$html$Html$Attributes$class("diva-metadata-value")
                 ]
               ),
               $author$project$View$HtmlRenderer$renderHtml(
@@ -30642,7 +30443,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("contents-meta")
+                $elm$html$Html$Attributes$class("diva-contents-meta")
               ]
             ),
             A2(
@@ -30655,6 +30456,55 @@
       );
     }
   );
+  var $author$project$Model$pageViewStartIndex = F3(
+    function(viewMode, shiftByOne, index) {
+      if (viewMode.$ === "OneUp") {
+        return index;
+      } else {
+        return shiftByOne ? !index ? 0 : A2($elm$core$Basics$modBy, 2, index) === 1 ? index : index - 1 : index - A2($elm$core$Basics$modBy, 2, index);
+      }
+    }
+  );
+  var $author$project$View$Sidebar$visiblePageIndexes = F3(
+    function(viewMode, shiftByOne, selectedIndex) {
+      if (selectedIndex.$ === "Just") {
+        var selected = selectedIndex.a;
+        if (viewMode.$ === "OneUp") {
+          return _List_fromArray(
+            [selected]
+          );
+        } else {
+          if (shiftByOne && !selected) {
+            return _List_fromArray(
+              [0]
+            );
+          } else {
+            var startIndex = A3($author$project$Model$pageViewStartIndex, $author$project$Model$TwoUp, shiftByOne, selected);
+            return _List_fromArray(
+              [startIndex, startIndex + 1]
+            );
+          }
+        }
+      } else {
+        return _List_Nil;
+      }
+    }
+  );
+  var $author$project$View$Sidebar$visibleCanvasIds = function(model) {
+    return A2(
+      $elm$core$List$map,
+      function($) {
+        return $.canvasId;
+      },
+      A2(
+        $elm$core$List$filterMap,
+        function(index) {
+          return A2($author$project$Model$getPageAt, index, model.pages);
+        },
+        A3($author$project$View$Sidebar$visiblePageIndexes, model.viewMode, model.shiftByOne, model.selectedIndex)
+      )
+    );
+  };
   var $author$project$View$Sidebar$viewRangeItems = F3(
     function(model, rangeIndexMap, items) {
       var rendered = A2(
@@ -30677,7 +30527,7 @@
             $elm$html$Html$ul,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("contents-list-nested list-reset")
+                $elm$html$Html$Attributes$class("diva-contents-list-nested diva-list-reset")
               ]
             ),
             rendered
@@ -30688,36 +30538,51 @@
   );
   var $author$project$View$Sidebar$viewRangeNode = F3(
     function(model, rangeIndexMap, range) {
-      var metadataBlock = _Utils_eq(
-        model.selectedRangeId,
-        $elm$core$Maybe$Just(range.id)
-      ) ? A2($author$project$View$Sidebar$viewRangeMetadata, model.detectedLanguage, range.metadata) : _List_Nil;
       var maybeIndex = A2($author$project$View$Sidebar$lookupRangeIndex, rangeIndexMap, range.id);
       var labelText = A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, model.detectedLanguage, range.label);
       var resolvedLabel = $elm$core$String$isEmpty(labelText) ? "[Untitled range]" : labelText;
+      var isExpanded = _Utils_eq(
+        model.selectedRangeId,
+        $elm$core$Maybe$Just(range.id)
+      );
+      var metadataBlock = isExpanded ? A2($author$project$View$Sidebar$viewRangeMetadata, model.detectedLanguage, range.metadata) : _List_Nil;
       var isCurrent = A2(
-        $elm$core$Maybe$withDefault,
-        false,
-        A2(
-          $elm$core$Maybe$map,
-          function(canvasId) {
-            return A2($author$project$View$Sidebar$rangeContainsCanvas, canvasId, range);
-          },
-          $author$project$View$Sidebar$currentCanvasId(model)
+        $elm$core$List$any,
+        function(canvasId) {
+          return A2($author$project$View$Sidebar$rangeContainsCanvas, canvasId, range);
+        },
+        $author$project$View$Sidebar$visibleCanvasIds(model)
+      );
+      var labelNode = A3($author$project$View$Sidebar$viewRangeButton, isCurrent, maybeIndex, resolvedLabel);
+      var headingNode = A2(
+        $elm$html$Html$div,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-heading")
+          ]
+        ),
+        _Utils_ap(
+          $elm$core$List$isEmpty(range.metadata) ? _List_Nil : _List_fromArray(
+            [
+              A3($author$project$View$Sidebar$viewRangeDisclosure, isExpanded, range.id, resolvedLabel)
+            ]
+          ),
+          _List_fromArray(
+            [labelNode]
+          )
         )
       );
-      var labelNode = A4($author$project$View$Sidebar$viewRangeButton, isCurrent, range.id, maybeIndex, resolvedLabel);
       var children = A3($author$project$View$Sidebar$viewRangeItems, model, rangeIndexMap, range.items);
       return A2(
         $elm$html$Html$li,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("contents-item")
+            $elm$html$Html$Attributes$class("diva-contents-item")
           ]
         ),
         A2(
           $elm$core$List$cons,
-          labelNode,
+          headingNode,
           _Utils_ap(metadataBlock, children)
         )
       );
@@ -30729,7 +30594,7 @@
         $elm$html$Html$ul,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("contents-list list-reset")
+            $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
           ]
         ),
         A2(
@@ -30759,7 +30624,7 @@
         $elm$html$Html$div,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("contents-view-tabs")
+            $elm$html$Html$Attributes$class("diva-contents-view-tabs")
           ]
         ),
         _List_fromArray(
@@ -30771,7 +30636,7 @@
                   $elm$html$Html$Attributes$classList(
                     _List_fromArray(
                       [
-                        _Utils_Tuple2("contents-view-button", true),
+                        _Utils_Tuple2("diva-contents-view-button", true),
                         _Utils_Tuple2(
                           "is-active",
                           _Utils_eq(contentsView, $author$project$Model$ContentsIndex)
@@ -30796,7 +30661,7 @@
                   $elm$html$Html$Attributes$classList(
                     _List_fromArray(
                       [
-                        _Utils_Tuple2("contents-view-button", true),
+                        _Utils_Tuple2("diva-contents-view-button", true),
                         _Utils_Tuple2(
                           "is-active",
                           _Utils_eq(contentsView, $author$project$Model$ContentsPages)
@@ -30827,6 +30692,21 @@
       );
     }
   );
+  var $author$project$View$Sidebar$currentCanvasId = function(model) {
+    return A2(
+      $elm$core$Maybe$map,
+      function($) {
+        return $.canvasId;
+      },
+      A2(
+        $elm$core$Maybe$andThen,
+        function(index) {
+          return A2($author$project$Model$getPageAt, index, model.pages);
+        },
+        model.selectedIndex
+      )
+    );
+  };
   var $author$project$View$Sidebar$rangesForCanvasInRange = F2(
     function(canvasId, range) {
       var nested = A2(
@@ -30947,12 +30827,12 @@
         }
       })();
       var resolvedLabel = $elm$core$String$isEmpty(labelText) ? rangePrefix + "[Untitled range]" : _Utils_ap(rangePrefix, labelText);
-      var labelNode = A4($author$project$View$Sidebar$viewRangeButton, false, range.id, maybeIndex, resolvedLabel);
+      var labelNode = A3($author$project$View$Sidebar$viewRangeButton, false, maybeIndex, resolvedLabel);
       return A2(
         $elm$html$Html$li,
         _List_fromArray(
           [
-            $elm$html$Html$Attributes$class("contents-item")
+            $elm$html$Html$Attributes$class("diva-contents-item")
           ]
         ),
         A2($elm$core$List$cons, labelNode, metadataBlock)
@@ -30987,7 +30867,7 @@
               $elm$html$Html$ul,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("contents-list list-reset")
+                  $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
                 ]
               ),
               A2(
@@ -31035,7 +30915,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("contents-panel")
+          $elm$html$Html$Attributes$class("diva-contents-panel")
         ]
       ),
       _List_fromArray(
@@ -31044,7 +30924,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("contents-title")
+                $elm$html$Html$Attributes$class("diva-contents-title")
               ]
             ),
             _List_fromArray(
@@ -31099,7 +30979,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("metadata-item")
+                  $elm$html$Html$Attributes$class("diva-metadata-item")
                 ]
               ),
               _List_fromArray(
@@ -31108,7 +30988,7 @@
                     $elm$html$Html$div,
                     _List_fromArray(
                       [
-                        $elm$html$Html$Attributes$class("metadata-label")
+                        $elm$html$Html$Attributes$class("diva-metadata-label")
                       ]
                     ),
                     _List_fromArray(
@@ -31121,7 +31001,7 @@
                     $elm$html$Html$div,
                     _List_fromArray(
                       [
-                        $elm$html$Html$Attributes$class("metadata-value")
+                        $elm$html$Html$Attributes$class("diva-metadata-value")
                       ]
                     ),
                     A2(
@@ -31154,7 +31034,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("metadata-panel")
+          $elm$html$Html$Attributes$class("diva-metadata-panel")
         ]
       ),
       (function() {
@@ -31167,7 +31047,7 @@
                 $elm$html$Html$div,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("metadata-body")
+                    $elm$html$Html$Attributes$class("diva-metadata-body")
                   ]
                 ),
                 _Utils_ap(
@@ -31184,7 +31064,7 @@
                 $elm$html$Html$div,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("metadata-body")
+                    $elm$html$Html$Attributes$class("diva-metadata-body")
                   ]
                 ),
                 _List_fromArray(
@@ -31208,7 +31088,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("sidebar-pane", true),
+                  _Utils_Tuple2("diva-sidebar-pane", true),
                   _Utils_Tuple2(
                     "is-hidden",
                     !_Utils_eq(current, target)
@@ -31233,7 +31113,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("sidebar-tab-button", true),
+                  _Utils_Tuple2("diva-sidebar-tab-button", true),
                   _Utils_Tuple2(
                     "is-active",
                     _Utils_eq(current, target)
@@ -31431,32 +31311,13 @@
   var $author$project$Msg$UserClickedThumbnail = function(a) {
     return { $: "UserClickedThumbnail", a };
   };
-  var $author$project$Model$pageViewStartIndex = F3(
-    function(viewMode, shiftByOne, index) {
-      if (viewMode.$ === "OneUp") {
-        return index;
-      } else {
-        return shiftByOne ? !index ? 0 : A2($elm$core$Basics$modBy, 2, index) === 1 ? index : index - 1 : index - A2($elm$core$Basics$modBy, 2, index);
-      }
-    }
-  );
   var $author$project$View$Sidebar$isThumbnailActive = F4(
     function(viewMode, shiftByOne, selectedIndex, index) {
-      if (selectedIndex.$ === "Just") {
-        var selected = selectedIndex.a;
-        if (viewMode.$ === "OneUp") {
-          return _Utils_eq(selected, index);
-        } else {
-          if (shiftByOne && !selected) {
-            return !index;
-          } else {
-            var startIndex = A3($author$project$Model$pageViewStartIndex, $author$project$Model$TwoUp, shiftByOne, selected);
-            return _Utils_eq(index, startIndex) || _Utils_eq(index, startIndex + 1);
-          }
-        }
-      } else {
-        return false;
-      }
+      return A2(
+        $elm$core$List$member,
+        index,
+        A3($author$project$View$Sidebar$visiblePageIndexes, viewMode, shiftByOne, selectedIndex)
+      );
     }
   );
   var $author$project$View$Sidebar$viewThumbnail = F6(
@@ -31490,8 +31351,9 @@
             "diva-lazy-image",
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("thumbs-lazy-image"),
+                $elm$html$Html$Attributes$class("diva-thumbs-lazy-image"),
                 A2($elm$html$Html$Attributes$attribute, "data-src", page.thumbUrl),
+                A2($elm$html$Html$Attributes$attribute, "data-fallback-src", page.fallbackThumbUrl),
                 A2(
                   $elm$html$Html$Attributes$attribute,
                   "data-alt",
@@ -31507,7 +31369,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("thumbs-image thumbs-image--protected"),
+                $elm$html$Html$Attributes$class("diva-thumbs-image diva-thumbs-image--protected"),
                 A2($elm$html$Html$Attributes$attribute, "aria-label", "Protected image")
               ]
             ),
@@ -31520,9 +31382,9 @@
           $elm$html$Html$Attributes$classList(
             _List_fromArray(
               [
-                _Utils_Tuple2("thumbs-item", true),
-                _Utils_Tuple2("ui-card", true),
-                _Utils_Tuple2("ui-card--dark", true),
+                _Utils_Tuple2("diva-thumbs-item", true),
+                _Utils_Tuple2("diva-ui-card", true),
+                _Utils_Tuple2("diva-ui-card--dark", true),
                 _Utils_Tuple2("is-active", isActive)
               ]
             )
@@ -31554,7 +31416,7 @@
                   $elm$html$Html$Attributes$classList(
                     _List_fromArray(
                       [
-                        _Utils_Tuple2("thumbs-label", true),
+                        _Utils_Tuple2("diva-thumbs-label", true),
                         _Utils_Tuple2("is-active", isActive)
                       ]
                     )
@@ -31592,7 +31454,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("thumbs", true),
+                  _Utils_Tuple2("diva-thumbs", true),
                   _Utils_Tuple2("is-fullscreen", fullscreen)
                 ]
               )
@@ -31627,7 +31489,7 @@
       var thumbnailPages = _Utils_eq(model.resourceResponse, $author$project$Model$ResourceLoading) || _Utils_eq(model.response, $author$project$Model$Loading) ? _List_Nil : model.pages;
       var panelClasses = _List_fromArray(
         [
-          _Utils_Tuple2("sidebar-panel", true),
+          _Utils_Tuple2("diva-sidebar-panel", true),
           _Utils_Tuple2("is-fullscreen", model.fullscreen),
           _Utils_Tuple2(
             "is-hidden",
@@ -31699,7 +31561,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("sidebar-tabs")
+                  $elm$html$Html$Attributes$class("diva-sidebar-tabs")
                 ]
               ),
               A2(
@@ -31712,7 +31574,7 @@
               $elm$html$Html$div,
               _List_fromArray(
                 [
-                  $elm$html$Html$Attributes$class("sidebar-content")
+                  $elm$html$Html$Attributes$class("diva-sidebar-content")
                 ]
               ),
               A2(
@@ -31782,7 +31644,7 @@
           $elm$html$Html$Attributes$classList(
             _List_fromArray(
               [
-                _Utils_Tuple2("sidebar-resizer", true),
+                _Utils_Tuple2("diva-sidebar-resizer", true),
                 _Utils_Tuple2(
                   "is-hidden",
                   !$author$project$View$Sidebar$isSidebarVisible(model.sidebarState)
@@ -31902,12 +31764,15 @@
     { path: "M88 0C39.4 0 0 39.4 0 88V424H.4c-.3 2.6-.4 5.3-.4 8c0 44.2 35.8 80 80 80H424c13.3 0 24-10.7 24-24s-10.7-24-24-24h-8V394.6c18.9-9 32-28.3 32-50.6V288H400v56c0 4.4-3.6 8-8 8H80c-11.4 0-22.2 2.4-32 6.7V88c0-22.1 17.9-40 40-40H392c4.4 0 8 3.6 8 8v72h48V56c0-30.9-25.1-56-56-56H88zM368 400v64H80c-17.7 0-32-14.3-32-32s14.3-32 32-32H368zM553 111c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l39 39H280c-13.3 0-24 10.7-24 24s10.7 24 24 24H558.1l-39 39c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0l80-80c9.4-9.4 9.4-24.6 0-33.9l-80-80z", viewBox: "0 0 640 512" }
   );
   var $author$project$Msg$UserToggledCollectionSidebar = { $: "UserToggledCollectionSidebar" };
+  var $author$project$View$Icons$showCollection = $author$project$View$Icons$makeSvgIcon(
+    { path: "M217 401L345 273c9.4-9.4 9.4-24.6 0-33.9L217 111c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l87 87L24 232c-13.3 0-24 10.7-24 24s10.7 24 24 24l246.1 0-87 87c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0zM344 80l80 0c22.1 0 40 17.9 40 40l0 272c0 22.1-17.9 40-40 40l-80 0c-13.3 0-24 10.7-24 24s10.7 24 24 24l80 0c48.6 0 88-39.4 88-88l0-272c0-48.6-39.4-88-88-88l-80 0c-13.3 0-24 10.7-24 24s10.7 24 24 24z", viewBox: "0 0 512 512" }
+  );
   var $author$project$View$Toolbar$viewCollectionSidebarButton = function(model) {
     var _v0 = model.resourceResponse;
     if (_v0.$ === "ResourceLoadedCollection") {
       return $author$project$View$Helpers$viewButton(
         {
-          icon: model.collectionSidebarVisible ? $author$project$View$Icons$hideSidebar : $author$project$View$Icons$showSidebar,
+          icon: model.collectionSidebarVisible ? $author$project$View$Icons$hideSidebar : $author$project$View$Icons$showCollection,
           isFullscreen: model.fullscreen,
           label: model.collectionSidebarVisible ? "Hide Collection" : "Show Collection",
           onClickMsg: $elm$core$Maybe$Just($author$project$Msg$UserToggledCollectionSidebar)
@@ -31926,7 +31791,7 @@
             $elm$html$Html$Attributes$classList(
               _List_fromArray(
                 [
-                  _Utils_Tuple2("canvas-label", true),
+                  _Utils_Tuple2("diva-canvas-label", true),
                   _Utils_Tuple2("is-fullscreen", fullscreen)
                 ]
               )
@@ -31975,7 +31840,7 @@
           $elm$html$Html$div,
           _List_fromArray(
             [
-              $elm$html$Html$Attributes$class("canvas-toolbar-item"),
+              $elm$html$Html$Attributes$class("diva-canvas-toolbar-item"),
               A2($elm$html$Html$Attributes$attribute, "data-tooltip", displayLabel)
             ]
           ),
@@ -31985,7 +31850,7 @@
                 $elm$html$Html$button,
                 _List_fromArray(
                   [
-                    $elm$html$Html$Attributes$class("canvas-toolbar-button"),
+                    $elm$html$Html$Attributes$class("diva-canvas-toolbar-button"),
                     $elm$html$Html$Attributes$type_("button"),
                     A2($elm$html$Html$Attributes$attribute, "aria-label", displayLabel),
                     A2($elm$html$Html$Attributes$attribute, "data-diva-auth-logout", action.sessionId),
@@ -32018,7 +31883,7 @@
       $elm$html$Html$div,
       _List_fromArray(
         [
-          $elm$html$Html$Attributes$class("canvas-toolbar-stack")
+          $elm$html$Html$Attributes$class("diva-canvas-toolbar-stack")
         ]
       ),
       _List_fromArray(
@@ -32027,7 +31892,7 @@
             $elm$html$Html$div,
             _List_fromArray(
               [
-                $elm$html$Html$Attributes$class("canvas-toolbar")
+                $elm$html$Html$Attributes$class("diva-canvas-toolbar")
               ]
             ),
             _List_fromArray(
@@ -32036,11 +31901,12 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("canvas-toolbar-section")
+                      $elm$html$Html$Attributes$class("diva-canvas-toolbar-section")
                     ]
                   ),
                   _List_fromArray(
                     [
+                      $author$project$View$Toolbar$viewCollectionSidebarButton(model),
                       $author$project$View$Helpers$viewButton(
                         {
                           icon: $author$project$View$Icons$zoomOut,
@@ -32064,7 +31930,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("canvas-toolbar-end")
+                      $elm$html$Html$Attributes$class("diva-canvas-toolbar-end")
                     ]
                   ),
                   _List_fromArray(
@@ -32074,7 +31940,7 @@
                         $elm$html$Html$div,
                         _List_fromArray(
                           [
-                            $elm$html$Html$Attributes$class("canvas-toolbar-section is-right")
+                            $elm$html$Html$Attributes$class("diva-canvas-toolbar-section is-right")
                           ]
                         ),
                         _Utils_ap(
@@ -32117,7 +31983,6 @@
                                   )
                                 }
                               ),
-                              $author$project$View$Toolbar$viewCollectionSidebarButton(model),
                               $author$project$View$Helpers$viewButton(
                                 (function() {
                                   var sidebarVisible = model.isMobile ? model.mobileSidebarOpen : !_Utils_eq(model.sidebarState, $author$project$Model$SidebarHidden);
@@ -32306,7 +32171,7 @@
                   $elm$html$Html$div,
                   _List_fromArray(
                     [
-                      $elm$html$Html$Attributes$class("required-statement-dock")
+                      $elm$html$Html$Attributes$class("diva-required-statement-dock")
                     ]
                   ),
                   _List_fromArray(
@@ -32398,7 +32263,7 @@
       },
       A2($elm$json$Json$Decode$field, "userLanguage", $elm$json$Json$Decode$string)
     )
-  )({ "versions": { "elm": "0.19.1" }, "types": { "message": "Msg.Msg", "aliases": { "IIIF.Presentation.Canvas": { "args": [], "type": "{ id : String.String, label : Maybe.Maybe IIIF.Language.LanguageMap, width : Maybe.Maybe Basics.Int, height : Maybe.Maybe Basics.Int, images : List.List IIIF.Presentation.Image, thumbnail : Maybe.Maybe IIIF.Presentation.Image, viewingLayout : Maybe.Maybe IIIF.Presentation.ViewingLayout }" }, "IIIF.Presentation.HomePage": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.Image": { "args": [], "type": "{ id : IIIF.Image.ImageUri, label : Maybe.Maybe IIIF.Language.LanguageMap, imageType : IIIF.Presentation.ImageType, service : List.List IIIF.Presentation.ServiceTypes, serviceObjects : List.List Json.Decode.Value }" }, "IIIF.Language.LabelValue": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Language.LanguageMap": { "args": [], "type": "List.List IIIF.Language.LanguageValues" }, "IIIF.Presentation.Logo": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes, width : Basics.Int, height : Basics.Int, service : Maybe.Maybe (List.List IIIF.Presentation.ServiceObject) }" }, "IIIF.Presentation.Manifest": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, metadata : List.List IIIF.Language.LabelValue, viewingDirection : IIIF.Presentation.ViewingDirection, summary : Maybe.Maybe IIIF.Language.LanguageMap, viewingLayout : IIIF.Presentation.ViewingLayout, canvases : List.List IIIF.Presentation.Canvas, ranges : Maybe.Maybe (List.List IIIF.Presentation.Range), homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe IIIF.Presentation.Image, provider : Maybe.Maybe (List.List IIIF.Presentation.Provider), thumbnail : Maybe.Maybe IIIF.Presentation.Image, requiredStatement : Maybe.Maybe IIIF.Presentation.RequiredStatement }" }, "IIIF.Presentation.Provider": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, type_ : IIIF.Presentation.ResourceTypes, homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe (List.List IIIF.Presentation.Logo), seeAlso : Maybe.Maybe (List.List IIIF.Presentation.SeeAlso) }" }, "IIIF.Presentation.Range": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.RangeItem, metadata : List.List IIIF.Language.LabelValue }" }, "IIIF.Presentation.RequiredStatement": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Presentation.SeeAlso": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.ServiceObject": { "args": [], "type": "{ id : String.String, serviceType : IIIF.Presentation.ServiceTypes }" }, "Json.Decode.Value": { "args": [], "type": "Json.Encode.Value" }, "IIIF.Presentation.Collection": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, summary : Maybe.Maybe IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.CollectionItem }" }, "IIIF.Image.ImageRequestParameters": { "args": [], "type": "{ host : String.String, prefix : String.String, region : IIIF.Image.ImageRegion, size : IIIF.Image.ImageSize, rotation : IIIF.Image.ImageRotation, quality : IIIF.Image.ImageQuality, format : IIIF.Image.ImageFormat }" }, "IIIF.Image.ImageServerParameters": { "args": [], "type": "{ host : String.String, prefix : String.String }" } }, "unions": { "Msg.Msg": { "args": [], "tags": { "AuthEvent": ["Auth.Event"], "ClientRequestedLayoutMode": ["String.String"], "ClientRequestedResource": ["String.String", "String.String"], "ClientReportedResourceReady": ["String.String"], "ClientReportedResourceFailed": ["String.String"], "ClientNotifiedFullscreenChanged": ["Basics.Bool"], "ClientNotifiedPageChanged": ["Basics.Int"], "ClientNotifiedPageChangedInstant": ["Basics.Int"], "ClientNotifiedScrollThumbs": [], "ServerRespondedWithCollectionItem": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithManifestFromCollection": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFManifest"], "ServerRespondedWithResource": ["Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithRequestedResource": ["String.String", "String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "UserAppliedFilterJson": [], "UserChangedZoomLevel": ["Basics.Float"], "UserClickedCloseManifestInfo": [], "UserClickedClosePageView": [], "UserClickedCollectionItem": ["String.String"], "UserClickedManifestItem": ["String.String", "String.String"], "UserClickedOpenManifestInfo": [], "UserClickedOpenPageView": [], "UserClickedPageViewImageChoice": ["Basics.Int"], "UserClickedPageViewNext": [], "UserClickedPageViewPrev": [], "UserClickedRange": ["String.String", "Maybe.Maybe Basics.Int"], "UserClickedSaveFilteredImage": [], "UserClickedThumbnail": ["Basics.Int"], "UserClickedZoomIn": [], "UserClickedZoomOut": [], "UserCopiedFilterJson": [], "UserDraggedCollectionSidebarResize": ["Basics.Int"], "UserDraggedSidebarResize": ["Basics.Int"], "UserEndedCollectionSidebarResize": [], "UserEndedSidebarResize": [], "UserResetAllFilters": [], "UserResetAltColourAdjust": [], "UserSelectedContentsIndex": [], "UserSelectedContentsPages": [], "UserStartedCollectionSidebarResize": ["Basics.Int"], "UserStartedSidebarResize": ["Basics.Int"], "UserToggledContents": [], "UserToggledCollectionSidebar": [], "UserToggledFilter": ["Filters.FilterToggle", "Basics.Bool"], "UserToggledFilterGroup": ["String.String"], "UserToggledFullscreen": [], "UserToggledMetadata": [], "UserToggledPageViewFullscreen": [], "UserToggledPageViewSidebar": [], "UserToggledShiftByOne": [], "UserToggledSidebar": [], "UserToggledThumbnails": [], "UserToggledTwoUp": [], "UserUpdatedFilterFloat": ["Filters.FilterFloatValue", "String.String"], "UserUpdatedFilterInt": ["Filters.FilterIntValue", "String.String"], "UserUpdatedFilterJsonInput": ["String.String"], "UserUpdatedFilterString": ["Filters.FilterStringValue", "String.String"], "ViewerLoadingChanged": ["Basics.Bool"], "ViewportChanged": ["Basics.Int", "Basics.Int"] } }, "Basics.Bool": { "args": [], "tags": { "True": [], "False": [] } }, "Http.Error": { "args": [], "tags": { "BadUrl": ["String.String"], "Timeout": [], "NetworkError": [], "BadStatus": ["Basics.Int"], "BadBody": ["String.String"] } }, "Auth.Event": { "args": [], "tags": { "Resolve": ["String.String", "String.String"], "Cancel": ["String.String"], "HttpSucceeded": ["String.String", "Basics.Int", "String.String"], "HttpFailed": ["String.String", "String.String"], "StorageRead": ["String.String", "Basics.Float", "Maybe.Maybe Json.Decode.Value"], "PopupOpened": ["String.String"], "PopupBlocked": ["String.String"], "PopupClosed": ["String.String"], "TokenMessage": ["String.String", "Basics.Float", "Json.Decode.Value"], "TokenFailed": ["String.String", "String.String"], "LogoutOpened": ["String.String"], "LogoutBlocked": ["String.String"], "LogoutClosed": [], "UserCancelled": [], "Destroyed": [] } }, "Filters.FilterFloatValue": { "args": [], "tags": { "FloatColourReplaceBlend": [], "FloatContrast": [], "FloatGamma": [], "FloatNormalizeStrength": [], "FloatPseudoColourBlue": [], "FloatPseudoColourGreen": [], "FloatPseudoColourRed": [], "FloatUnsharpAmount": [] } }, "Filters.FilterIntValue": { "args": [], "tags": { "IntAdaptiveOffset": [], "IntAdaptiveWindow": [], "IntAltRedGamma": [], "IntAltRedSigmoid": [], "IntAltRedVibrance": [], "IntAltRedHue": [], "IntAltRedHueWindow": [], "IntAltGreenGamma": [], "IntAltGreenSigmoid": [], "IntAltGreenHue": [], "IntAltGreenHueWindow": [], "IntAltGreenVibrance": [], "IntAltBlueGamma": [], "IntAltBlueSigmoid": [], "IntAltBlueHue": [], "IntAltBlueHueWindow": [], "IntAltBlueVibrance": [], "IntBrightness": [], "IntCcBlue": [], "IntCcGreen": [], "IntCcRed": [], "IntColourmapCenter": [], "IntColourReplaceTolerance": [], "IntPcaHue": [], "IntHue": [], "IntMorphKernel": [], "IntRotation": [], "IntSaturation": [], "IntThreshold": [], "IntVibrance": [] } }, "Filters.FilterStringValue": { "args": [], "tags": { "StringColourmapPreset": [], "StringColourReplaceSource": [], "StringColourReplaceTarget": [], "StringConvolutionPreset": [], "StringPcaMode": [], "StringMorphOperation": [], "StringPseudoColourMode": [] } }, "Filters.FilterToggle": { "args": [], "tags": { "ToggleAdaptive": [], "ToggleAltBlueGamma": [], "ToggleAltBlueHue": [], "ToggleAltBlueSigmoid": [], "ToggleAltBlueVibrance": [], "ToggleAltGreenGamma": [], "ToggleAltGreenHue": [], "ToggleAltGreenSigmoid": [], "ToggleAltGreenVibrance": [], "ToggleAltRedGamma": [], "ToggleAltRedHue": [], "ToggleAltRedSigmoid": [], "ToggleAltRedVibrance": [], "ToggleBrightness": [], "ToggleCcBlue": [], "ToggleCcGreen": [], "ToggleCcRed": [], "ToggleColourmap": [], "ToggleColourReplace": [], "ToggleColourReplacePreserveLum": [], "ToggleContrast": [], "ToggleConvolution": [], "ToggleFlip": [], "ToggleGamma": [], "ToggleGlobalPca": [], "ToggleGrayscale": [], "ToggleHue": [], "ToggleInvert": [], "ToggleMorph": [], "ToggleNormalize": [], "TogglePseudoColour": [], "ToggleSaturation": [], "ToggleThreshold": [], "ToggleUnsharp": [], "ToggleVibrance": [] } }, "Basics.Float": { "args": [], "tags": { "Float": [] } }, "IIIF.Presentation.IIIFManifest": { "args": [], "tags": { "IIIFManifest": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Manifest"] } }, "IIIF.Presentation.IIIFResource": { "args": [], "tags": { "ResourceManifest": ["IIIF.Presentation.IIIFManifest"], "ResourceCollection": ["IIIF.Presentation.IIIFCollection"], "ResourceCanvas": ["IIIF.Presentation.IIIFCanvas"], "ResourceRange": ["IIIF.Presentation.IIIFRange"] } }, "Basics.Int": { "args": [], "tags": { "Int": [] } }, "Maybe.Maybe": { "args": ["a"], "tags": { "Just": ["a"], "Nothing": [] } }, "Result.Result": { "args": ["error", "value"], "tags": { "Ok": ["value"], "Err": ["error"] } }, "String.String": { "args": [], "tags": { "String": [] } }, "IIIF.Presentation.IIIFCanvas": { "args": [], "tags": { "IIIFCanvas": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Canvas"] } }, "IIIF.Presentation.IIIFCollection": { "args": [], "tags": { "IIIFCollection": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Collection"] } }, "IIIF.Presentation.IIIFRange": { "args": [], "tags": { "IIIFRange": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Range"] } }, "IIIF.Version.IIIFVersion": { "args": [], "tags": { "IIIFV1": [], "IIIFV2": [], "IIIFV3": [] } }, "IIIF.Presentation.ImageType": { "args": [], "tags": { "PrimaryImage": [], "ChoiceImage": [] } }, "IIIF.Image.ImageUri": { "args": [], "tags": { "InfoUri": ["IIIF.Image.ImageServerParameters"], "ImageUri": ["IIIF.Image.ImageRequestParameters"], "StaticImageUri": ["IIIF.Image.ImageServerParameters"] } }, "IIIF.Language.LanguageValues": { "args": [], "tags": { "LanguageValues": ["IIIF.Language.Language", "List.List String.String"] } }, "List.List": { "args": ["a"], "tags": {} }, "IIIF.Presentation.MediaFormats": { "args": [], "tags": { "ImageJpeg": [], "OtherFormat": ["String.String"] } }, "IIIF.Presentation.RangeItem": { "args": [], "tags": { "RangeCanvas": ["String.String"], "RangeRange": ["IIIF.Presentation.Range"] } }, "IIIF.Presentation.ResourceTypes": { "args": [], "tags": { "Video": [], "OtherResource": ["String.String"] } }, "IIIF.Presentation.ServiceTypes": { "args": [], "tags": { "ImageService1": [], "ImageService2": [], "ImageService3": [], "SearchService1": [], "AutoCompleteService1": [], "AuthTokenService1": [], "AuthLogoutService1": [], "UnknownService": [] } }, "Json.Encode.Value": { "args": [], "tags": { "Value": [] } }, "IIIF.Presentation.ViewingDirection": { "args": [], "tags": { "LeftToRight": [], "RightToLeft": [], "TopToBottom": [], "BottomToTop": [] } }, "IIIF.Presentation.ViewingLayout": { "args": [], "tags": { "LayoutV2": ["IIIF.Presentation.ViewingHint"], "LayoutV3": ["List.List IIIF.Presentation.Behavior"] } }, "IIIF.Presentation.Behavior": { "args": [], "tags": { "AutoAdvanceBehavior": [], "NoAutoAdvanceBehavior": [], "RepeatBehavior": [], "NoRepeatBehavior": [], "UnorderedBehavior": [], "IndividualsBehavior": [], "ContinuousBehavior": [], "PagedBehavior": [], "FacingPagesBehavior": [], "NonPagedBehavior": [], "MultiPartBehavior": [], "TogetherBehavior": [], "SequenceBehavior": [], "ThumbnailNavBehavior": [], "NoNavBehavior": [], "HiddenBehavior": [] } }, "IIIF.Presentation.CollectionItem": { "args": [], "tags": { "NestedCollection": ["IIIF.Presentation.Collection"], "ManifestItem": ["IIIF.Presentation.Manifest"] } }, "IIIF.Image.ImageFormat": { "args": [], "tags": { "JpegFormat": [], "TiffFormat": [], "PngFormat": [], "Jp2Format": [], "GifFormat": [], "PdfFormat": [], "WebpFormat": [] } }, "IIIF.Image.ImageQuality": { "args": [], "tags": { "ColorQuality": [], "GrayQuality": [], "BiTonalQuality": [], "DefaultQuality": [], "NativeQuality": [] } }, "IIIF.Image.ImageRegion": { "args": [], "tags": { "FullRegion": [], "SquareRegion": [], "SizeRegion": ["{ x : Basics.Int, y : Basics.Int, w : Basics.Int, h : Basics.Int }"], "PctSizeRegion": ["{ x : Basics.Float, y : Basics.Float, w : Basics.Float, h : Basics.Float }"] } }, "IIIF.Image.ImageRotation": { "args": [], "tags": { "NormalRotation": ["Basics.Float"], "MirroredRotation": ["Basics.Float"] } }, "IIIF.Image.ImageSize": { "args": [], "tags": { "MaxSize": [], "ExactMaxSize": [], "WidthOnlySize": ["Basics.Int"], "ExactWidthOnlySize": ["Basics.Int"], "HeightOnlySize": ["Basics.Int"], "ExactHeightOnlySize": ["Basics.Int"], "PercentSize": ["Basics.Float"], "ExactPercentSize": ["Basics.Float"], "WidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"] } }, "IIIF.Language.Language": { "args": [], "tags": { "LanguageCode": ["String.String"], "None": [], "Default": [] } }, "IIIF.Presentation.ViewingHint": { "args": [], "tags": { "PagedHint": [], "IndividualsHint": [], "ContinuousHint": [], "MultiPartHint": [], "NonPagedHint": [], "TopHint": [], "FacingPagesHint": [] } } } } }) } };
+  )({ "versions": { "elm": "0.19.1" }, "types": { "message": "Msg.Msg", "aliases": { "IIIF.Presentation.Canvas": { "args": [], "type": "{ id : String.String, label : Maybe.Maybe IIIF.Language.LanguageMap, width : Maybe.Maybe Basics.Int, height : Maybe.Maybe Basics.Int, images : List.List IIIF.Presentation.Image, thumbnail : Maybe.Maybe IIIF.Presentation.Image, viewingLayout : Maybe.Maybe IIIF.Presentation.ViewingLayout }" }, "IIIF.Presentation.HomePage": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.Image": { "args": [], "type": "{ id : IIIF.Image.ImageUri, label : Maybe.Maybe IIIF.Language.LanguageMap, imageType : IIIF.Presentation.ImageType, service : List.List IIIF.Presentation.ServiceTypes, serviceObjects : List.List Json.Decode.Value }" }, "IIIF.Language.LabelValue": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Language.LanguageMap": { "args": [], "type": "List.List IIIF.Language.LanguageValues" }, "IIIF.Presentation.Logo": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes, width : Basics.Int, height : Basics.Int, service : Maybe.Maybe (List.List IIIF.Presentation.ServiceObject) }" }, "IIIF.Presentation.Manifest": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, metadata : List.List IIIF.Language.LabelValue, viewingDirection : IIIF.Presentation.ViewingDirection, summary : Maybe.Maybe IIIF.Language.LanguageMap, viewingLayout : IIIF.Presentation.ViewingLayout, canvases : List.List IIIF.Presentation.Canvas, ranges : Maybe.Maybe (List.List IIIF.Presentation.Range), homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe IIIF.Presentation.Image, provider : Maybe.Maybe (List.List IIIF.Presentation.Provider), thumbnail : Maybe.Maybe IIIF.Presentation.Image, requiredStatement : Maybe.Maybe IIIF.Presentation.RequiredStatement }" }, "IIIF.Presentation.Provider": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, type_ : IIIF.Presentation.ResourceTypes, homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe (List.List IIIF.Presentation.Logo), seeAlso : Maybe.Maybe (List.List IIIF.Presentation.SeeAlso) }" }, "IIIF.Presentation.Range": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.RangeItem, metadata : List.List IIIF.Language.LabelValue }" }, "IIIF.Presentation.RequiredStatement": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Presentation.SeeAlso": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.ServiceObject": { "args": [], "type": "{ id : String.String, serviceType : IIIF.Presentation.ServiceTypes }" }, "Json.Decode.Value": { "args": [], "type": "Json.Encode.Value" }, "IIIF.Presentation.Collection": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, summary : Maybe.Maybe IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.CollectionItem }" }, "IIIF.Image.ImageRequestParameters": { "args": [], "type": "{ host : String.String, prefix : String.String, region : IIIF.Image.ImageRegion, size : IIIF.Image.ImageSize, rotation : IIIF.Image.ImageRotation, quality : IIIF.Image.ImageQuality, format : IIIF.Image.ImageFormat }" }, "IIIF.Image.ImageServerParameters": { "args": [], "type": "{ host : String.String, prefix : String.String }" } }, "unions": { "Msg.Msg": { "args": [], "tags": { "AuthEvent": ["Auth.Event"], "ClientRequestedLayoutMode": ["String.String"], "ClientRequestedResource": ["String.String", "String.String"], "ClientNotifiedFullscreenChanged": ["Basics.Bool"], "ClientNotifiedPageChanged": ["Basics.Int"], "ClientNotifiedPageChangedInstant": ["Basics.Int"], "ClientNotifiedScrollThumbs": [], "ServerRespondedWithCollectionItem": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithManifestFromCollection": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFManifest"], "ServerRespondedWithResource": ["Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithRequestedResource": ["String.String", "String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "UserAppliedFilterJson": [], "UserChangedZoomLevel": ["Basics.Float"], "UserClickedCloseManifestInfo": [], "UserClickedClosePageView": [], "UserClickedCollectionItem": ["String.String"], "UserClickedManifestItem": ["String.String", "String.String"], "UserClickedOpenManifestInfo": [], "UserClickedOpenPageView": [], "UserClickedPageViewImageChoice": ["Basics.Int"], "UserClickedPageViewNext": [], "UserClickedPageViewPrev": [], "UserClickedRange": ["Maybe.Maybe Basics.Int"], "UserClickedSaveFilteredImage": [], "UserClickedThumbnail": ["Basics.Int"], "UserClickedZoomIn": [], "UserClickedZoomOut": [], "UserCopiedFilterJson": [], "UserDraggedCollectionSidebarResize": ["Basics.Int"], "UserDraggedSidebarResize": ["Basics.Int"], "UserEndedCollectionSidebarResize": [], "UserEndedSidebarResize": [], "UserResetAllFilters": [], "UserResetAltColourAdjust": [], "UserSelectedContentsIndex": [], "UserSelectedContentsPages": [], "UserStartedCollectionSidebarResize": ["Basics.Int"], "UserStartedSidebarResize": ["Basics.Int"], "UserToggledContents": [], "UserToggledCollectionSidebar": [], "UserToggledFilter": ["Filters.FilterToggle", "Basics.Bool"], "UserToggledFilterGroup": ["String.String"], "UserToggledFullscreen": [], "UserToggledMetadata": [], "UserToggledPageViewFullscreen": [], "UserToggledPageViewSidebar": [], "UserToggledRangeMetadata": ["String.String"], "UserToggledShiftByOne": [], "UserToggledSidebar": [], "UserToggledThumbnails": [], "UserToggledTwoUp": [], "UserUpdatedFilterFloat": ["Filters.FilterFloatValue", "String.String"], "UserUpdatedFilterInt": ["Filters.FilterIntValue", "String.String"], "UserUpdatedFilterJsonInput": ["String.String"], "UserUpdatedFilterString": ["Filters.FilterStringValue", "String.String"], "ViewerLoadingChanged": ["Basics.Bool"], "ViewportChanged": ["Basics.Int", "Basics.Int"] } }, "Basics.Bool": { "args": [], "tags": { "True": [], "False": [] } }, "Http.Error": { "args": [], "tags": { "BadUrl": ["String.String"], "Timeout": [], "NetworkError": [], "BadStatus": ["Basics.Int"], "BadBody": ["String.String"] } }, "Auth.Event": { "args": [], "tags": { "Resolve": ["String.String", "String.String"], "Cancel": ["String.String"], "HttpSucceeded": ["String.String", "Basics.Int", "String.String"], "HttpFailed": ["String.String", "String.String"], "StorageRead": ["String.String", "Basics.Float", "Maybe.Maybe Json.Decode.Value"], "PopupOpened": ["String.String"], "PopupBlocked": ["String.String"], "PopupClosed": ["String.String"], "TokenMessage": ["String.String", "Basics.Float", "Json.Decode.Value"], "TokenFailed": ["String.String", "String.String"], "LogoutOpened": ["String.String"], "LogoutBlocked": ["String.String"], "LogoutClosed": [], "UserCancelled": [], "Destroyed": [] } }, "Filters.FilterFloatValue": { "args": [], "tags": { "FloatColourReplaceBlend": [], "FloatContrast": [], "FloatGamma": [], "FloatNormalizeStrength": [], "FloatPseudoColourBlue": [], "FloatPseudoColourGreen": [], "FloatPseudoColourRed": [], "FloatUnsharpAmount": [] } }, "Filters.FilterIntValue": { "args": [], "tags": { "IntAdaptiveOffset": [], "IntAdaptiveWindow": [], "IntAltRedGamma": [], "IntAltRedSigmoid": [], "IntAltRedVibrance": [], "IntAltRedHue": [], "IntAltRedHueWindow": [], "IntAltGreenGamma": [], "IntAltGreenSigmoid": [], "IntAltGreenHue": [], "IntAltGreenHueWindow": [], "IntAltGreenVibrance": [], "IntAltBlueGamma": [], "IntAltBlueSigmoid": [], "IntAltBlueHue": [], "IntAltBlueHueWindow": [], "IntAltBlueVibrance": [], "IntBrightness": [], "IntCcBlue": [], "IntCcGreen": [], "IntCcRed": [], "IntColourmapCenter": [], "IntColourReplaceTolerance": [], "IntPcaHue": [], "IntHue": [], "IntMorphKernel": [], "IntRotation": [], "IntSaturation": [], "IntThreshold": [], "IntVibrance": [] } }, "Filters.FilterStringValue": { "args": [], "tags": { "StringColourmapPreset": [], "StringColourReplaceSource": [], "StringColourReplaceTarget": [], "StringConvolutionPreset": [], "StringPcaMode": [], "StringMorphOperation": [], "StringPseudoColourMode": [] } }, "Filters.FilterToggle": { "args": [], "tags": { "ToggleAdaptive": [], "ToggleAltBlueGamma": [], "ToggleAltBlueHue": [], "ToggleAltBlueSigmoid": [], "ToggleAltBlueVibrance": [], "ToggleAltGreenGamma": [], "ToggleAltGreenHue": [], "ToggleAltGreenSigmoid": [], "ToggleAltGreenVibrance": [], "ToggleAltRedGamma": [], "ToggleAltRedHue": [], "ToggleAltRedSigmoid": [], "ToggleAltRedVibrance": [], "ToggleBrightness": [], "ToggleCcBlue": [], "ToggleCcGreen": [], "ToggleCcRed": [], "ToggleColourmap": [], "ToggleColourReplace": [], "ToggleColourReplacePreserveLum": [], "ToggleContrast": [], "ToggleConvolution": [], "ToggleFlip": [], "ToggleGamma": [], "ToggleGlobalPca": [], "ToggleGrayscale": [], "ToggleHue": [], "ToggleInvert": [], "ToggleMorph": [], "ToggleNormalize": [], "TogglePseudoColour": [], "ToggleSaturation": [], "ToggleThreshold": [], "ToggleUnsharp": [], "ToggleVibrance": [] } }, "Basics.Float": { "args": [], "tags": { "Float": [] } }, "IIIF.Presentation.IIIFManifest": { "args": [], "tags": { "IIIFManifest": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Manifest"] } }, "IIIF.Presentation.IIIFResource": { "args": [], "tags": { "ResourceManifest": ["IIIF.Presentation.IIIFManifest"], "ResourceCollection": ["IIIF.Presentation.IIIFCollection"], "ResourceCanvas": ["IIIF.Presentation.IIIFCanvas"], "ResourceRange": ["IIIF.Presentation.IIIFRange"] } }, "Basics.Int": { "args": [], "tags": { "Int": [] } }, "Maybe.Maybe": { "args": ["a"], "tags": { "Just": ["a"], "Nothing": [] } }, "Result.Result": { "args": ["error", "value"], "tags": { "Ok": ["value"], "Err": ["error"] } }, "String.String": { "args": [], "tags": { "String": [] } }, "IIIF.Presentation.IIIFCanvas": { "args": [], "tags": { "IIIFCanvas": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Canvas"] } }, "IIIF.Presentation.IIIFCollection": { "args": [], "tags": { "IIIFCollection": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Collection"] } }, "IIIF.Presentation.IIIFRange": { "args": [], "tags": { "IIIFRange": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Range"] } }, "IIIF.Version.IIIFVersion": { "args": [], "tags": { "IIIFV1": [], "IIIFV2": [], "IIIFV3": [] } }, "IIIF.Presentation.ImageType": { "args": [], "tags": { "PrimaryImage": [], "ChoiceImage": [] } }, "IIIF.Image.ImageUri": { "args": [], "tags": { "InfoUri": ["IIIF.Image.ImageServerParameters"], "ImageUri": ["IIIF.Image.ImageRequestParameters"], "StaticImageUri": ["IIIF.Image.ImageServerParameters"] } }, "IIIF.Language.LanguageValues": { "args": [], "tags": { "LanguageValues": ["IIIF.Language.Language", "List.List String.String"] } }, "List.List": { "args": ["a"], "tags": {} }, "IIIF.Presentation.MediaFormats": { "args": [], "tags": { "ImageJpeg": [], "OtherFormat": ["String.String"] } }, "IIIF.Presentation.RangeItem": { "args": [], "tags": { "RangeCanvas": ["String.String"], "RangeRange": ["IIIF.Presentation.Range"] } }, "IIIF.Presentation.ResourceTypes": { "args": [], "tags": { "Video": [], "OtherResource": ["String.String"] } }, "IIIF.Presentation.ServiceTypes": { "args": [], "tags": { "ImageService1": [], "ImageService2": [], "ImageService3": [], "SearchService1": [], "AutoCompleteService1": [], "AuthTokenService1": [], "AuthLogoutService1": [], "UnknownService": [] } }, "Json.Encode.Value": { "args": [], "tags": { "Value": [] } }, "IIIF.Presentation.ViewingDirection": { "args": [], "tags": { "LeftToRight": [], "RightToLeft": [], "TopToBottom": [], "BottomToTop": [] } }, "IIIF.Presentation.ViewingLayout": { "args": [], "tags": { "LayoutV2": ["IIIF.Presentation.ViewingHint"], "LayoutV3": ["List.List IIIF.Presentation.Behavior"] } }, "IIIF.Presentation.Behavior": { "args": [], "tags": { "AutoAdvanceBehavior": [], "NoAutoAdvanceBehavior": [], "RepeatBehavior": [], "NoRepeatBehavior": [], "UnorderedBehavior": [], "IndividualsBehavior": [], "ContinuousBehavior": [], "PagedBehavior": [], "FacingPagesBehavior": [], "NonPagedBehavior": [], "MultiPartBehavior": [], "TogetherBehavior": [], "SequenceBehavior": [], "ThumbnailNavBehavior": [], "NoNavBehavior": [], "HiddenBehavior": [] } }, "IIIF.Presentation.CollectionItem": { "args": [], "tags": { "NestedCollection": ["IIIF.Presentation.Collection"], "ManifestItem": ["IIIF.Presentation.Manifest"] } }, "IIIF.Image.ImageFormat": { "args": [], "tags": { "JpegFormat": [], "TiffFormat": [], "PngFormat": [], "Jp2Format": [], "GifFormat": [], "PdfFormat": [], "WebpFormat": [] } }, "IIIF.Image.ImageQuality": { "args": [], "tags": { "ColorQuality": [], "GrayQuality": [], "BiTonalQuality": [], "DefaultQuality": [], "NativeQuality": [] } }, "IIIF.Image.ImageRegion": { "args": [], "tags": { "FullRegion": [], "SquareRegion": [], "SizeRegion": ["{ x : Basics.Int, y : Basics.Int, w : Basics.Int, h : Basics.Int }"], "PctSizeRegion": ["{ x : Basics.Float, y : Basics.Float, w : Basics.Float, h : Basics.Float }"] } }, "IIIF.Image.ImageRotation": { "args": [], "tags": { "NormalRotation": ["Basics.Float"], "MirroredRotation": ["Basics.Float"] } }, "IIIF.Image.ImageSize": { "args": [], "tags": { "MaxSize": [], "ExactMaxSize": [], "WidthOnlySize": ["Basics.Int"], "ExactWidthOnlySize": ["Basics.Int"], "HeightOnlySize": ["Basics.Int"], "ExactHeightOnlySize": ["Basics.Int"], "PercentSize": ["Basics.Float"], "ExactPercentSize": ["Basics.Float"], "WidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"] } }, "IIIF.Language.Language": { "args": [], "tags": { "LanguageCode": ["String.String"], "None": [], "Default": [] } }, "IIIF.Presentation.ViewingHint": { "args": [], "tags": { "PagedHint": [], "IndividualsHint": [], "ContinuousHint": [], "MultiPartHint": [], "NonPagedHint": [], "TopHint": [], "FacingPagesHint": [] } } } } }) } };
 
   // src/auth.ts
   var STORAGE_PREFIX = "diva:iiif-auth2:";
@@ -34321,15 +34186,10 @@
       this.pagesByCanvasId = /* @__PURE__ */ new Map();
       this.pagesByLabel = /* @__PURE__ */ new Map();
       this.readySettled = false;
-      this.hasActiveResource = false;
       this.activeResourceRequestId = "initial";
-      this.committedResourceRequestId = null;
       this.resourceSequence = 0;
       this.pendingResource = null;
       this.awaitingViewerResource = null;
-      this.awaitingResourceRollback = null;
-      this.pendingResourceFailure = null;
-      this.completedResourceRollbacks = /* @__PURE__ */ new Map();
       this.resourceLoading = true;
       this.viewerLoading = false;
       const root = document.getElementById(rootId);
@@ -34493,9 +34353,6 @@
       this.getPort("resourceLoadFailed").subscribe((value) => {
         this.handleResourceFailed(value.requestId, value.message);
       });
-      this.getPort("resourceRollbackCompleted").subscribe((value) => {
-        this.handleResourceRollbackCompleted(value.requestId, value.pageIndex);
-      });
       this.getPort("copyToClipboard").subscribe((text) => {
         this.copyToClipboard(text);
       });
@@ -34569,25 +34426,27 @@
       if (requestId !== this.activeResourceRequestId) {
         return;
       }
+      const replacementCommitted = requestId !== "initial";
+      if (replacementCommitted) {
+        this.updateState({ resourceUrl: url });
+        this.emit("resourcechange", { resourceUrl: url, state: this.copyState() });
+      }
       if (hasPages) {
-        this.awaitingViewerResource = { id: requestId, url, pageIndex };
+        this.awaitingViewerResource = { id: requestId, url, pageIndex, resourceChangeEmitted: replacementCommitted };
         const viewer = this.ensureMainViewer();
         const sourceId = (_a = this.pages[pageIndex]) == null ? void 0 : _a.primaryImage.id;
         if (sourceId && viewer && typeof viewer.isPageLoaded === "function" && viewer.isPageLoaded(pageIndex, sourceId)) {
-          this.completeResource(requestId, url);
+          this.completeResource(requestId, url, !replacementCommitted);
         }
         return;
       }
-      this.completeResource(requestId, url);
+      this.completeResource(requestId, url, !replacementCommitted);
     }
-    completeResource(requestId, url) {
+    completeResource(requestId, url, emitResourceChange) {
       if (requestId !== this.activeResourceRequestId) {
         return;
       }
       this.awaitingViewerResource = null;
-      this.awaitingResourceRollback = null;
-      this.hasActiveResource = true;
-      this.committedResourceRequestId = requestId;
       this.updateState({ resourceUrl: url, ready: true });
       this.resourceLoading = false;
       this.refreshLoadingState();
@@ -34600,72 +34459,30 @@
         this.pendingResource.resolve();
         this.pendingResource = null;
       }
-      this.getPort("resourceReadinessSucceeded").send(requestId);
-      this.emit("resourcechange", { resourceUrl: url, state: this.copyState() });
+      if (emitResourceChange) {
+        this.emit("resourcechange", { resourceUrl: url, state: this.copyState() });
+      }
     }
     handleResourceFailed(requestId, message) {
-      var _a;
+      var _a, _b;
       if (requestId !== this.activeResourceRequestId) {
         return;
       }
-      this.pendingResourceFailure = { id: requestId, error: new Error(message), operation: "setResource" };
-      if (this.completedResourceRollbacks.has(requestId)) {
-        const pageIndex = (_a = this.completedResourceRollbacks.get(requestId)) != null ? _a : null;
-        this.completedResourceRollbacks.delete(requestId);
-        this.handleResourceRollbackCompleted(requestId, pageIndex);
-      }
-    }
-    handleResourceRollbackCompleted(requestId, pageIndex) {
-      var _a, _b;
-      if (typeof pageIndex === "number") {
-        this.updateState({ currentPageIndex: pageIndex, visiblePageIndexes: [pageIndex] });
-      }
-      const failure = this.pendingResourceFailure;
-      if (!failure || failure.id !== requestId) {
-        if (requestId === this.activeResourceRequestId) {
-          this.completedResourceRollbacks.set(requestId, pageIndex);
-        }
-        return;
-      }
-      const rollbackViewState = ((_a = this.pendingResource) == null ? void 0 : _a.id) === requestId ? this.pendingResource.rollbackViewState : null;
-      if (!this.hasActiveResource || typeof pageIndex !== "number") {
-        this.finalizeResourceFailure(requestId);
-        return;
-      }
-      const resourceId = `rollback-${requestId}`;
-      if (rollbackViewState) {
-        this.callViewerMethodWhenReady("restoreViewState", rollbackViewState, resourceId);
-      }
-      const viewer = this.ensureMainViewer();
-      const sourceId = (_b = this.pages[pageIndex]) == null ? void 0 : _b.primaryImage.id;
-      if (sourceId && viewer && typeof viewer.isResourcePageLoaded === "function" && viewer.isResourcePageLoaded(resourceId, pageIndex, sourceId)) {
-        this.finalizeResourceFailure(requestId);
-        return;
-      }
-      this.awaitingResourceRollback = { failureId: requestId, resourceId, pageIndex };
-    }
-    finalizeResourceFailure(requestId) {
-      var _a, _b;
-      const failure = this.pendingResourceFailure;
-      if (!failure || failure.id !== requestId) {
-        return;
-      }
-      this.pendingResourceFailure = null;
+      const error = new Error(message);
+      const previousReady = ((_a = this.pendingResource) == null ? void 0 : _a.id) === requestId ? this.pendingResource.previousReady : false;
       this.awaitingViewerResource = null;
-      this.awaitingResourceRollback = null;
-      this.activeResourceRequestId = (_a = this.committedResourceRequestId) != null ? _a : requestId;
-      this.updateState({ ready: this.hasActiveResource });
+      this.updateState({ ready: previousReady });
       this.resourceLoading = false;
       this.refreshLoadingState();
-      if (!this.hasActiveResource && !this.readySettled) {
+      if (!this.readySettled) {
         this.readySettled = true;
-        this.readyReject(failure.error);
+        this.readyReject(error);
       }
       if (requestId !== "initial" && ((_b = this.pendingResource) == null ? void 0 : _b.id) === requestId) {
-        this.pendingResource.reject(failure.error);
+        this.pendingResource.reject(error);
         this.pendingResource = null;
       }
-      this.emit("error", { error: failure.error, operation: failure.operation, recoverable: this.hasActiveResource });
+      this.emit("error", { error, operation: "setResource", recoverable: requestId !== "initial" });
     }
     assertAlive() {
       if (this.isDestroyed) {
@@ -34850,10 +34667,12 @@
      * `InvalidStateError` when the viewer has been destroyed.
      *
      * @remarks
-     * Event listeners remain attached. A failed request restores the previous
-     * resource and view before rejecting and emits a recoverable `error` event.
-     * When called before any resource is ready, this request supersedes the
-     * constructor resource and also determines the outcome of {@link Diva.ready}.
+     * Event listeners remain attached. Fetching or parsing failures leave the
+     * previous resource active. Once a replacement parses, it becomes active;
+     * failure of its required image rejects while leaving that replacement and
+     * its unavailable-image UI in place. Calling this method before any resource
+     * is ready supersedes the constructor resource and determines the outcome of
+     * {@link Diva.ready}.
      *
      * @example
      * ```ts
@@ -34861,20 +34680,16 @@
      * ```
      */
     setResource(url) {
-      var _a, _b;
       this.assertAlive();
       if (!url || typeof url !== "string") {
         return Promise.reject(new TypeError("A resource URL is required."));
       }
-      const viewer = this.ensureMainViewer();
-      const rollbackViewState = (_b = (_a = this.pendingResource) == null ? void 0 : _a.rollbackViewState) != null ? _b : this.hasActiveResource && viewer && typeof viewer.getViewState === "function" ? viewer.getViewState() : null;
       if (this.pendingResource) {
         this.pendingResource.reject(new DOMException("The resource load was superseded.", "AbortError"));
         this.pendingResource = null;
       }
       this.awaitingViewerResource = null;
-      this.awaitingResourceRollback = null;
-      this.pendingResourceFailure = null;
+      const previousReady = this.state.ready;
       const id = `public-${++this.resourceSequence}`;
       let resolve;
       let reject;
@@ -34884,7 +34699,7 @@
       });
       void promise.catch(() => {
       });
-      this.pendingResource = { id, promise, resolve, reject, rollbackViewState };
+      this.pendingResource = { id, promise, resolve, reject, previousReady };
       this.activeResourceRequestId = id;
       this.updateState({ ready: false });
       this.resourceLoading = true;
@@ -35106,7 +34921,6 @@
       (_a = this.pendingResource) == null ? void 0 : _a.reject(destroyed);
       this.pendingResource = null;
       this.awaitingViewerResource = null;
-      this.awaitingResourceRollback = null;
       this.updateState({ destroyed: true, loading: false });
       this.closeFilterPreview();
       this.auth.destroy();
@@ -35224,12 +35038,7 @@
       }
       const awaiting = this.awaitingViewerResource;
       if (awaiting && detail.resourceId === awaiting.id && detail.index === awaiting.pageIndex) {
-        this.completeResource(awaiting.id, awaiting.url);
-        return;
-      }
-      const rollback = this.awaitingResourceRollback;
-      if (rollback && detail.resourceId === rollback.resourceId && detail.index === rollback.pageIndex) {
-        this.finalizeResourceFailure(rollback.failureId);
+        this.completeResource(awaiting.id, awaiting.url, !awaiting.resourceChangeEmitted);
       }
     }
     handleZoomChange(event) {
@@ -35256,19 +35065,18 @@
       const error = new Error((detail == null ? void 0 : detail.message) || "The image could not be loaded.");
       const awaiting = this.awaitingViewerResource;
       if (awaiting && (detail == null ? void 0 : detail.resourceId) === awaiting.id && (detail == null ? void 0 : detail.index) === awaiting.pageIndex) {
-        this.awaitingViewerResource = null;
-        this.pendingResourceFailure = { id: awaiting.id, error, operation: "loadPage" };
-        this.getPort("resourceReadinessFailed").send(awaiting.id);
-        if (this.completedResourceRollbacks.has(awaiting.id)) {
-          const pageIndex = (_a = this.completedResourceRollbacks.get(awaiting.id)) != null ? _a : null;
-          this.completedResourceRollbacks.delete(awaiting.id);
-          this.handleResourceRollbackCompleted(awaiting.id, pageIndex);
+        this.updateState({ ready: false });
+        this.resourceLoading = false;
+        this.refreshLoadingState();
+        if (!this.readySettled) {
+          this.readySettled = true;
+          this.readyReject(error);
         }
-        return;
-      }
-      const rollback = this.awaitingResourceRollback;
-      if (rollback && (detail == null ? void 0 : detail.resourceId) === rollback.resourceId && (detail == null ? void 0 : detail.index) === rollback.pageIndex) {
-        this.finalizeResourceFailure(rollback.failureId);
+        if (awaiting.id !== "initial" && ((_a = this.pendingResource) == null ? void 0 : _a.id) === awaiting.id) {
+          this.pendingResource.reject(error);
+          this.pendingResource = null;
+        }
+        this.emit("error", { error, operation: "loadPage", recoverable: true });
         return;
       }
       this.emit("error", { error, operation: "loadPage", recoverable: true });
