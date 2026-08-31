@@ -80,6 +80,7 @@ const viewer = new Diva(rootElementId, options);
 | `objectData` | `string` | required | URL to a IIIF manifest or collection |
 | `initialPage` | `number \| DivaPageSelector` | `0` | Initial zero-based page index, exact canvas ID, or complete case-insensitive label |
 | `acceptHeaders` | `string[]` | `[]` | Preferred HTTP Accept values for IIIF resource requests |
+| `staticImageCorsPolicy` | `"required" \| "fallback" \| "none"` | `"required"` | CORS policy for static non-IIIF images; non-CORS images cannot use filters or Save view |
 | `showSidebar` | `boolean` | `true` | Whether to show the navigation sidebar |
 | `sidebarWidth` | `number` | `320` | Initial sidebar width, constrained to 220–520 CSS pixels |
 | `sidebarPanel` | `"thumbnails" \| "contents" \| "metadata"` | `"thumbnails"` | Initially selected available sidebar panel |
@@ -93,7 +94,8 @@ const viewer = new Diva("diva-wrapper", {
   objectData: manifestUrl,
   initialPage: { by: "label", value: "Folio 12r" },
   sidebarPanel: "contents",
-  sidebarWidth: 360
+  sidebarWidth: 360,
+  staticImageCorsPolicy: "fallback"
 });
 ```
 
@@ -105,9 +107,17 @@ Diva.js supports:
 
 - IIIF Presentation API 2 and 3 manifests, collections, ranges, and multiple images per canvas.
 - IIIF Image API 1, 2, and 3 services.
-- Static image resources when the image server permits cross-origin canvas access.
+- Static image resources, including servers that cannot provide CORS headers when configured with a non-CORS policy.
 - The IIIF Authorization Flow API 2.0 `active` access profile, including optional logout services.
 
-Static images and tiles must return an appropriate CORS header. Diva.js intentionally does not use a non-CORS fallback because its image-processing tools require canvas access.
+As of v7.4.3, Diva uses CORS by default (`staticImageCorsPolicy: "required"`) so Page View filters and Save view can read their pixels. Use `"fallback"` to automatically retry a failed static-image request once without CORS, or `"none"` to use non-CORS loading immediately. Non-CORS static images remain viewable, but filters and Save view are disabled because the browser taints their canvas.
+
+Using `fallback` has significant drawbacks.
+
+- Filters and Save view are unavailable, since a non-CORS image is marked as 'tainted' and cannot be loaded into a Canvas view.
+- It makes an extra image request for each CORS-incompatible static image.
+- In the current implementation, "fallback" selects Canvas/HTML rendering up front so non-CORS images can display. That forfeits WebGL acceleration for the
+  viewer, including normal IIIF images in that session.
+- It can mask a missing CORS configuration that an institution may prefer to fix.
 
 Authorization API 2.0 `kiosk` and `external` profiles, Authentication API 1.0, substitutes, and tiered access are not currently supported.

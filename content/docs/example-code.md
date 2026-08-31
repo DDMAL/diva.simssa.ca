@@ -125,3 +125,92 @@ If an application only needs to wait for initial readiness, it can also use the 
 await viewer.ready;
 console.log(viewer.getState());
 ```
+
+## Add Annotations Programmatically
+
+After the manifest is ready, use a Canvas ID from `viewer.getPages()` to add [Web Annotations](https://www.w3.org/TR/annotation-model/). Diva.js supports rectangular `xywh` targets and inline SVG selectors.
+
+### Add a Rectangular Annotation
+
+This example adds a comment to a 600 × 400 pixel region. Coordinates are measured in the Canvas's full-resolution image pixels:
+
+```javascript
+await viewer.ready;
+
+const canvasId = viewer.getCurrentPage().canvasId;
+
+viewer.setAnnotation({
+  id: "https://example.org/annotations/reading-note-1",
+  type: "Annotation",
+  motivation: "commenting",
+  body: {
+    type: "TextualBody",
+    format: "text/html",
+    value: "<p>Look closely at this illuminated initial.</p>"
+  },
+  target: {
+    type: "SpecificResource",
+    source: canvasId,
+    selector: {
+      type: "FragmentSelector",
+      conformsTo: "http://www.w3.org/TR/media-frags/",
+      value: "xywh=180,420,600,400"
+    }
+  }
+});
+```
+
+`setAnnotation` adds an annotation, or replaces an API-supplied annotation with the same `id`.
+
+### Add Multiple Annotations, Including SVG
+
+`setAnnotations` replaces the annotations previously supplied through the JavaScript API. It does not discard annotations loaded from the manifest.
+
+```javascript
+const canvasId = viewer.getPages()[0].canvasId;
+
+viewer.setAnnotations([
+  {
+    id: "https://example.org/annotations/rectangle-1",
+    type: "Annotation",
+    body: { type: "TextualBody", value: "A rectangular note" },
+    target: `${canvasId}#xywh=80,120,320,180`
+  },
+  {
+    id: "https://example.org/annotations/shape-1",
+    type: "Annotation",
+    body: { type: "TextualBody", value: "An irregular shape" },
+    target: {
+      type: "SpecificResource",
+      source: canvasId,
+      selector: {
+        type: "SvgSelector",
+        value: "<svg xmlns='http://www.w3.org/2000/svg'><polygon points='600,120 760,190 680,350 540,280'/></svg>"
+      }
+    }
+  }
+]);
+```
+
+For an SVG selector, Diva.js draws the shape itself. When an Image API extract is requested, it uses the rectangle that encloses the shape.
+
+### Read, Link, and Clear Annotations
+
+The getters return defensive copies, so callers can safely transform their results. `getImageRegionForAnnotation` returns the same 320-pixel-bounded IIIF Image API region used by the annotation panel, or `undefined` when the Canvas has no public Image API service.
+
+```javascript
+const annotations = viewer.getAnnotationsForCanvas(canvasId);
+const allAnnotations = viewer.getAllAnnotations();
+
+const annotation = annotations[0];
+const body = viewer.getAnnotationBody(annotation.id);
+const imageRegionUrl = viewer.getImageRegionForAnnotation(annotation.id);
+
+console.log({ body, imageRegionUrl, total: allAnnotations.length });
+
+// Remove every manifest and API-supplied annotation on this Canvas.
+viewer.clearAnnotationsForCanvas(canvasId);
+
+// Or remove every annotation from the loaded manifest.
+viewer.clearAllAnnotations();
+```
