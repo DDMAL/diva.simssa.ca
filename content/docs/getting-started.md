@@ -116,7 +116,7 @@ Diva.js supports:
 
 Annotations can also be supplied directly through the JavaScript API after the manifest is ready. Targets must identify a Canvas in the loaded manifest and use an `xywh` fragment or selector, or an inline SVG selector. See [Example Code](/docs/example-code/#add-annotations-programmatically) for complete examples.
 
-As of v7.5.0, Diva uses CORS by default (`staticImageCorsPolicy: "required"`) so Page View filters and Save view can read their pixels. Use `"fallback"` to automatically retry a failed static-image request once without CORS, or `"none"` to use non-CORS loading immediately. Non-CORS static images remain viewable, but filters and Save view are disabled because the browser taints their canvas.
+As of Diva.js 7.5, Diva uses CORS by default (`staticImageCorsPolicy: "required"`) so Page View filters and Save view can read their pixels. Use `"fallback"` to automatically retry a failed static-image request once without CORS, or `"none"` to use non-CORS loading immediately. Non-CORS static images remain viewable, but filters and Save view are disabled because the browser taints their canvas.
 
 Using `fallback` has significant drawbacks.
 

@@ -148,7 +148,8 @@
     </div>
     <div class="playground-field" style="grid-column: span 4;">
       <label for="enable-annotations">Annotations</label>
-      <label class="playground-checkbox"><input id="enable-annotations" name="enable-annotations" type="checkbox" /> Load manifest annotations</label>
+      <label class="playground-checkbox"><input id="enable-annotations" name="enable-annotations" type="checkbox" />Enable manifest annotations</label>
+      <label class="playground-checkbox"><input id="disable-annotation-click" name="disable-annotation-click" type="checkbox" value="true" />Disable annotation selection</label>
     </div>
     <div id="playground-actions" style="grid-column: span 12;">
       <button type="submit">Load manifest</button>
@@ -173,28 +174,33 @@
 
         const manifests = [
             {
-                label: "Bodleian Library MS. Ind. Inst. Misc. 22 (v2/v3)",
+                label: "Bodleian Library MS. Ind. Inst. Misc. 22 (IIIF v2/v3)",
                 url: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/e32a277e-91e2-4a6d-8ba6-cc4bad230410.json"
             },
             {
-                label: "Bodleian Library Drink Map of Oxford, 1883 (v2/v3)",
+                label: "Bodleian Library Drink Map of Oxford, 1883 (IIIF v2/v3)",
                 url: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/ff0d368d-09be-4d45-a338-b988e3fd3102.json"
             },
             {
-                label: "e-codices: Top level collection",
+                label: "e-codices: Top level collection (Collections)",
                 url: "https://www.e-codices.unifr.ch/metadata/iiif/collection.json"
             },
-
            {
-                label: "Evangelistar: Perikopenbuch Heinrichs II.-BSB Clm 4452 (en/de/zh)",
+                label: "Evangelistar: Perikopenbuch Heinrichs II.-BSB Clm 4452 (Languages en/de/zh)",
                 url: "https://api.digitale-sammlungen.de/iiif/presentation/v2/bsb00087481/manifest"
             },
             {
                 label: "BnF. Département des Manuscrits. Latin 12044",
                 url: "https://gallica.bnf.fr/iiif/ark:/12148/btv1b6000531z/manifest.json",
             },
-
-
+            {
+                label: "Heidelberg, Universitätsbibliothek Heidelberg, Cod. Pal. germ. 389 (Annotations)",
+                url: "https://digi.ub.uni-heidelberg.de/diglit/iiif3/cpg389/manifest",
+            },
+            {
+                label: "Bodleian Library MS. Arab. c. 90 (Annotations, IIIF v2/v3)",
+                url: "https://iiif.bodleian.ox.ac.uk/iiif/manifest/748a9d50-5a3a-440e-ab9d-567dd68b6abb.json",
+            },
         ];
 
         const acceptProfiles = {
@@ -209,6 +215,7 @@
         const status = document.getElementById("playground-status");
         const languageSelect = document.getElementById("language-select");
         const enableAnnotations = document.getElementById("enable-annotations");
+        const disableAnnotationSelection = document.getElementById("disable-annotation-click");
         const form = document.getElementById("playground-controls");
         let viewer = null;
 
@@ -288,7 +295,8 @@
                 acceptHeaders: acceptHeaders,
                 showSidebar: true,
                 showTitle: true,
-                enableAnnotations: enableAnnotations.checked
+                enableAnnotations: enableAnnotations.checked,
+                enableAnnotationSelection: !disableAnnotationSelection.checked
             };
 
             if (languageSelect.value !== "auto")
@@ -333,6 +341,14 @@
         manifestSelect.addEventListener("change", function ()
         {
             updateUrlState();
+        });
+
+        disableAnnotationSelection.addEventListener("change", function ()
+        {
+            if (viewer && typeof viewer.setAnnotationSelectionEnabled === "function")
+            {
+                viewer.setAnnotationSelectionEnabled(!disableAnnotationSelection.checked);
+            }
         });
 
         form.addEventListener("submit", function (event)
