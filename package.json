@@ -6,7 +6,7 @@
     "docs:api:local": "../diva.js/node_modules/.bin/typedoc --options config/typedoc.json --entryPoints ../diva.js/src/diva-esm.ts --tsconfig ../diva.js/tsconfig.json --out static/docs/api"
   },
   "devDependencies": {
-    "diva.js": "7.4.0",
+    "diva.js": "7.5.0",
     "typedoc": "0.28.20",
     "typescript": "5.9.3"
   }

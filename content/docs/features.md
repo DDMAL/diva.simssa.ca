@@ -32,6 +32,7 @@ Diva.js is a IIIF image viewer built for document reading. The features below fo
 - **Collection explorer**: Browse IIIF collections with an expandable tree and select manifests from within the viewer.
 - **Image service compatibility**: Loads IIIF Image API 1, 2, and 3 services as well as CORS-enabled static images.
 - **Authorized images**: Supports the IIIF Authorization Flow API 2.0 `active` access profile and optional logout services.
+- **Web Annotations**: Display annotations supplied by a IIIF manifest, including rectangular and SVG targets, annotation details, and Image API extracts.
 
 ## Integration Features
 
@@ -39,3 +40,4 @@ Diva.js is a IIIF image viewer built for document reading. The features below fo
 - **Typed events**: Listen for ready, resource, page, layout, zoom, loading, fullscreen, and error changes.
 - **npm and ES modules**: Use the browser or ES module build with published TypeScript declarations.
 - **Deep-link building blocks**: Find and open pages by zero-based index, exact canvas ID, or complete localized label while retaining control of application URLs and history.
+- **Annotation API**: Add, replace, inspect, select, and clear Web Annotations, with typed `annotationselect` events for host applications.

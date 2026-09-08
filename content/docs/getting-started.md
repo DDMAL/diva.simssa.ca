@@ -80,6 +80,9 @@ const viewer = new Diva(rootElementId, options);
 | `objectData` | `string` | required | URL to a IIIF manifest or collection |
 | `initialPage` | `number \| DivaPageSelector` | `0` | Initial zero-based page index, exact canvas ID, or complete case-insensitive label |
 | `acceptHeaders` | `string[]` | `[]` | Preferred HTTP Accept values for IIIF resource requests |
+| `enableAnnotations` | `boolean` | `false` | Load and display annotations declared by a IIIF manifest |
+| `enableAnnotationSelection` | `boolean` | `true` | Allow clicking or keyboard activation to open annotation details |
+| `annotationServer` | `string` | none | Optional GET endpoint used when a canvas has no declared annotation resources |
 | `staticImageCorsPolicy` | `"required" \| "fallback" \| "none"` | `"required"` | CORS policy for static non-IIIF images; non-CORS images cannot use filters or Save view |
 | `showSidebar` | `boolean` | `true` | Whether to show the navigation sidebar |
 | `sidebarWidth` | `number` | `320` | Initial sidebar width, constrained to 220–520 CSS pixels |
@@ -109,8 +112,11 @@ Diva.js supports:
 - IIIF Image API 1, 2, and 3 services.
 - Static image resources, including servers that cannot provide CORS headers when configured with a non-CORS policy.
 - The IIIF Authorization Flow API 2.0 `active` access profile, including optional logout services.
+- Manifest-declared Web Annotations when `enableAnnotations` is enabled.
 
-As of v7.4.3, Diva uses CORS by default (`staticImageCorsPolicy: "required"`) so Page View filters and Save view can read their pixels. Use `"fallback"` to automatically retry a failed static-image request once without CORS, or `"none"` to use non-CORS loading immediately. Non-CORS static images remain viewable, but filters and Save view are disabled because the browser taints their canvas.
+Annotations can also be supplied directly through the JavaScript API after the manifest is ready. Targets must identify a Canvas in the loaded manifest and use an `xywh` fragment or selector, or an inline SVG selector. See [Example Code](/docs/example-code/#add-annotations-programmatically) for complete examples.
+
+As of v7.5.0, Diva uses CORS by default (`staticImageCorsPolicy: "required"`) so Page View filters and Save view can read their pixels. Use `"fallback"` to automatically retry a failed static-image request once without CORS, or `"none"` to use non-CORS loading immediately. Non-CORS static images remain viewable, but filters and Save view are disabled because the browser taints their canvas.
 
 Using `fallback` has significant drawbacks.
 

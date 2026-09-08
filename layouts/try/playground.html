@@ -42,6 +42,18 @@
     color: var(--color-text-muted);
   }
 
+  .playground-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+  }
+
+  .playground-checkbox input {
+    width: 18px;
+    height: 18px;
+  }
+
   .playground-field.is-hidden {
     display: none;
   }
@@ -134,6 +146,10 @@
         <option value="zh">Chinese (zh)</option>
       </select>
     </div>
+    <div class="playground-field" style="grid-column: span 4;">
+      <label for="enable-annotations">Annotations</label>
+      <label class="playground-checkbox"><input id="enable-annotations" name="enable-annotations" type="checkbox" /> Load manifest annotations</label>
+    </div>
     <div id="playground-actions" style="grid-column: span 12;">
       <button type="submit">Load manifest</button>
     </div>
@@ -192,6 +208,7 @@
         const acceptSelect = document.getElementById("accept-select");
         const status = document.getElementById("playground-status");
         const languageSelect = document.getElementById("language-select");
+        const enableAnnotations = document.getElementById("enable-annotations");
         const form = document.getElementById("playground-controls");
         let viewer = null;
 
@@ -270,7 +287,8 @@
                 objectData: manifestUrl,
                 acceptHeaders: acceptHeaders,
                 showSidebar: true,
-                showTitle: true
+                showTitle: true,
+                enableAnnotations: enableAnnotations.checked
             };
 
             if (languageSelect.value !== "auto")

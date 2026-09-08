@@ -128,7 +128,16 @@ console.log(viewer.getState());
 
 ## Add Annotations Programmatically
 
-After the manifest is ready, use a Canvas ID from `viewer.getPages()` to add [Web Annotations](https://www.w3.org/TR/annotation-model/). Diva.js supports rectangular `xywh` targets and inline SVG selectors.
+Set `enableAnnotations` to load annotations declared by a IIIF manifest. After the manifest is ready, use a Canvas ID from `viewer.getPages()` to add [Web Annotations](https://www.w3.org/TR/annotation-model/) from your application. Diva.js supports rectangular `xywh` targets and inline SVG selectors.
+
+```javascript
+const viewer = new Diva("diva-wrapper", {
+  objectData: manifestUrl,
+  enableAnnotations: true
+});
+```
+
+`enableAnnotations` only loads annotations advertised by the manifest. API-supplied annotations work independently of that option.
 
 ### Add a Rectangular Annotation
 
@@ -196,7 +205,7 @@ For an SVG selector, Diva.js draws the shape itself. When an Image API extract i
 
 ### Read, Link, and Clear Annotations
 
-The getters return defensive copies, so callers can safely transform their results. `getImageRegionForAnnotation` returns the same 320-pixel-bounded IIIF Image API region used by the annotation panel, or `undefined` when the Canvas has no public Image API service.
+The getters return defensive copies, so callers can safely transform their results. `getImageRegionForAnnotation` returns the same 320-pixel-bounded IIIF Image API region used by the annotation panel, or `null` when no usable Image API region is available.
 
 ```javascript
 const annotations = viewer.getAnnotationsForCanvas(canvasId);
@@ -213,4 +222,17 @@ viewer.clearAnnotationsForCanvas(canvasId);
 
 // Or remove every annotation from the loaded manifest.
 viewer.clearAllAnnotations();
+```
+
+### Respond to Annotation Selection
+
+By default, viewers allow people to click or activate an annotation with the keyboard. This opens the details panel and emits an `annotationselect` event. Applications can disable that interaction with `enableAnnotationSelection: false` or change it later with `setAnnotationSelectionEnabled`.
+
+```javascript
+viewer.addEventListener("annotationselect", (event) => {
+  const { annotationId } = event.detail;
+  console.log(viewer.getAnnotationBody(annotationId));
+});
+
+viewer.setAnnotationSelectionEnabled(false);
 ```
