@@ -9,6 +9,7 @@ Diva.js is a IIIF image viewer built for document reading. The features below fo
 ## Reading Experience
 
 - **Scroll-first navigation**: Documents are read by continuously scrolling through pages, rather than stepping one image at a time. This keeps context visible and supports longer reading sessions.
+- **Loading previews**: Nearby thumbnail images provide a low-resolution preview while image tiles arrive, with annotation data requested early when enabled.
 - **Page view modal**: A zoomable single-page view, with optional fullscreen, a dedicated filter sidebar, and display of multiple "Choice" images on a canvas. 
 - **Sidebar tools**: Thumbnails, contents, and metadata are available in a mobile-friendly resizable sidebar.
 - **Responsive design**: Works across desktop and mobile screens with touch-friendly interaction.
@@ -31,8 +32,8 @@ Diva.js is a IIIF image viewer built for document reading. The features below fo
 - **Manifest information panel**: View manifest metadata, summary, viewing behavior/direction, and provider details.
 - **Collection explorer**: Browse IIIF collections with an expandable tree and select manifests from within the viewer.
 - **Image service compatibility**: Loads IIIF Image API 1, 2, and 3 services as well as CORS-enabled static images.
-- **Authorized images**: Supports the IIIF Authorization Flow API 2.0 `active` access profile and optional logout services.
-- **Web Annotations**: Display annotations supplied by a IIIF manifest, including rectangular and SVG targets, annotation details, and Image API extracts.
+- **Authorized images**: Supports the IIIF Authorization Flow API 2.0 `active` and `external` access profiles and optional logout services.
+- **Web Annotations**: Display annotations supplied by a IIIF manifest, including rectangular and SVG targets, multiple textual bodies, readable hover previews, annotation details, and Image API extracts.
 
 ## Integration Features
 
@@ -41,3 +42,4 @@ Diva.js is a IIIF image viewer built for document reading. The features below fo
 - **npm and ES modules**: Use the browser or ES module build with published TypeScript declarations.
 - **Deep-link building blocks**: Find and open pages by zero-based index, exact canvas ID, or complete localized label while retaining control of application URLs and history.
 - **Annotation API**: Add, replace, inspect, select, and clear Web Annotations, with typed `annotationselect` events for host applications.
+- **Host-managed logout UI**: Hide Diva's image-service logout buttons with `showLogoutButton: false` while retaining image authentication.

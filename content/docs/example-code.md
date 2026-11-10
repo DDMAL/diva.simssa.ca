@@ -171,6 +171,38 @@ viewer.setAnnotation({
 
 `setAnnotation` adds an annotation, or replaces an API-supplied annotation with the same `id`.
 
+### Use Multiple Textual Bodies
+
+An annotation's `body` can be an array. Each textual body is rendered separately,
+so a translation or transcription can accompany a description:
+
+```javascript
+viewer.setAnnotation({
+  id: "https://example.org/annotations/transcription-1",
+  type: "Annotation",
+  body: [
+    {
+      type: "TextualBody",
+      format: "text/html",
+      language: "en",
+      value: "<p>A description of the illuminated initial.</p>"
+    },
+    {
+      type: "TextualBody",
+      format: "text/plain",
+      language: "la",
+      value: "In principio"
+    }
+  ],
+  target: `${canvasId}#xywh=180,420,600,400`
+});
+```
+
+HTML fragments are sanitized independently, while `text/plain` remains literal
+text. `getAnnotationBody(id)` returns the source values joined by blank lines,
+not sanitized inspector HTML. Click the annotation outline—not the moving hover
+preview—to read the complete body in the inspector.
+
 ### Add Multiple Annotations, Including SVG
 
 `setAnnotations` replaces the annotations previously supplied through the JavaScript API. It does not discard annotations loaded from the manifest.
@@ -236,3 +268,18 @@ viewer.addEventListener("annotationselect", (event) => {
 
 viewer.setAnnotationSelectionEnabled(false);
 ```
+
+## Use the Host Application's Logout Control
+
+If the surrounding application already provides a logout interface, hide Diva's
+IIIF image-service logout buttons at construction time:
+
+```javascript
+const viewer = new Diva("diva-wrapper", {
+  objectData: manifestUrl,
+  showLogoutButton: false
+});
+```
+
+The default is `true`. This setting only controls visibility; image authentication
+continues to work, and it does not log the user out of the service or host site.

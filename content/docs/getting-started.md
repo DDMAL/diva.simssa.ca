@@ -9,7 +9,7 @@ weight: 2
 Diva.js requires OpenSeadragon. You can load both browser bundles directly:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.1.0/build/openseadragon/openseadragon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@6.1.1/build/openseadragon/openseadragon.min.js"></script>
 <script src="path/to/diva.js"></script>
 ```
 
@@ -88,6 +88,7 @@ const viewer = new Diva(rootElementId, options);
 | `sidebarWidth` | `number` | `320` | Initial sidebar width, constrained to 220–520 CSS pixels |
 | `sidebarPanel` | `"thumbnails" \| "contents" \| "metadata"` | `"thumbnails"` | Initially selected available sidebar panel |
 | `showTitle` | `boolean` | `true` | Whether to show the resource title |
+| `showLogoutButton` | `boolean` | `true` | Show IIIF image-service logout controls; hide them when the host application supplies its own logout interface |
 | `setLanguage` | `string` | browser language | Preferred interface language |
 
 Page selectors use either an exact canvas identifier or a complete localized label:
@@ -111,7 +112,7 @@ Diva.js supports:
 - IIIF Presentation API 2 and 3 manifests, collections, ranges, and multiple images per canvas.
 - IIIF Image API 1, 2, and 3 services.
 - Static image resources, including servers that cannot provide CORS headers when configured with a non-CORS policy.
-- The IIIF Authorization Flow API 2.0 `active` access profile, including optional logout services.
+- The IIIF Authorization Flow API 2.0 `active` and `external` access profiles, including optional logout services.
 - Manifest-declared Web Annotations when `enableAnnotations` is enabled.
 
 Annotations can also be supplied directly through the JavaScript API after the manifest is ready. Targets must identify a Canvas in the loaded manifest and use an `xywh` fragment or selector, or an inline SVG selector. See [Example Code](/docs/example-code/#add-annotations-programmatically) for complete examples.
@@ -126,4 +127,6 @@ Using `fallback` has significant drawbacks.
   viewer, including normal IIIF images in that session.
 - It can mask a missing CORS configuration that an institution may prefer to fix.
 
-Authorization API 2.0 `kiosk` and `external` profiles, Authentication API 1.0, substitutes, and tiered access are not currently supported.
+The `external` profile lets Diva reuse an existing service session without an interactive login prompt when the service supports it. Setting `showLogoutButton: false` only hides the viewer's logout controls; it does not alter that session or disable authentication.
+
+Authorization API 2.0 `kiosk`, Authentication API 1.0, substitutes, and tiered access are not currently supported.

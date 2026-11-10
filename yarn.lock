@@ -77,10 +77,10 @@ brace-expansion@^5.0.5:
   dependencies:
     balanced-match "^4.0.2"
 
-diva.js@7.5.1:
-  version "7.5.1"
-  resolved "https://registry.yarnpkg.com/diva.js/-/diva.js-7.5.1.tgz#db5cd49c43c9a8d6204ab86442d21ca152a4ae75"
-  integrity sha512-2Gd5U6m0Ffyu65VfbLj5MmuU1AXo/uvuv3pc8Du4Qmdspz5KiIUR/O+3Qemw3H7g6j1DjBcpoDq1ZJJC3j3VGQ==
+diva.js@7.6.0:
+  version "7.6.0"
+  resolved "https://registry.npmjs.org/diva.js/-/diva.js-7.6.0.tgz#a02a94925bdfe7968100c6155a82a85e60038cb5"
+  integrity sha512-tvxy5OTW6+PgWhnNcwUEs37H0vGV/k4/Yv/dSOlDQ0AMq7AvVZw7rHfAg6rCxx69gNxZPBOI+mo+6Nhy0mAkgQ==
 
 entities@^4.5.0:
   version "4.5.0"

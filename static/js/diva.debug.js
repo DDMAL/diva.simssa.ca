@@ -1,5 +1,125 @@
 "use strict";
 (() => {
+  // src/annotation-bodies.ts
+  function annotationBodies(body) {
+    if (typeof body === "string") {
+      return [{ value: body }];
+    }
+    if (Array.isArray(body)) {
+      return body.flatMap(annotationBodies);
+    }
+    if (body && typeof body === "object") {
+      const entry = body;
+      const value = typeof entry.value === "string" ? entry.value : entry.chars;
+      if (typeof value === "string") {
+        return [{
+          value,
+          format: typeof entry.format === "string" ? entry.format : void 0,
+          language: typeof entry.language === "string" ? entry.language : void 0
+        }];
+      }
+    }
+    return [];
+  }
+  var isPlainTextBody = (body) => {
+    var _a;
+    return ((_a = body.format) == null ? void 0 : _a.split(";")[0].trim().toLowerCase()) === "text/plain";
+  };
+  var annotationBodiesEqual = (left, right) => left === right || Boolean(
+    left && right && left.length === right.length && left.every(
+      (body, index) => body.value === right[index].value && body.format === right[index].format && body.language === right[index].language
+    )
+  );
+  function annotationTooltipText(bodies, sanitize) {
+    return bodies.map((body) => {
+      var _a, _b, _c;
+      if (isPlainTextBody(body)) {
+        return body.value.replace(/\r\n?/g, "\n").trim();
+      }
+      const content = sanitize(body.value);
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      let node;
+      while (node = walker.nextNode()) {
+        node.textContent = (_b = (_a = node.textContent) == null ? void 0 : _a.replace(/\s+/g, " ")) != null ? _b : "";
+      }
+      content.querySelectorAll("br").forEach((element) => element.replaceWith("\n"));
+      content.querySelectorAll("p, div, li, dt, dd").forEach((element) => {
+        element.before("\n");
+        element.after("\n");
+      });
+      return ((_c = content.textContent) != null ? _c : "").split("\n").map((line) => line.trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    }).filter(Boolean).join("\n\n");
+  }
+  function annotationTooltipPreview(text) {
+    const lines = text.split("\n").slice(0, 6).join("\n");
+    const characters = Array.from(lines);
+    let preview = characters.slice(0, 240).join("").trimEnd();
+    if (characters.length > 240) {
+      preview = preview.replace(/\s+\S*$/u, "").trimEnd() || preview;
+    }
+    return preview.length < text.length ? `${preview}
+\u2026 Click annotation for full text` : preview;
+  }
+
+  // src/annotation-index.ts
+  var AnnotationIndex = class {
+    constructor() {
+      this.canvases = /* @__PURE__ */ new Map();
+      this.annotations = /* @__PURE__ */ new Map();
+      this.order = /* @__PURE__ */ new Map();
+      this.nextOrder = 0;
+    }
+    set(canvasId, annotations, idFor, lastWins = false) {
+      this.removeEntries(canvasId);
+      if (!this.order.has(canvasId)) {
+        this.order.set(canvasId, this.nextOrder++);
+      }
+      const ids = /* @__PURE__ */ new Set();
+      for (const annotation of annotations) {
+        const id = idFor(annotation);
+        if (!lastWins && ids.has(id)) {
+          continue;
+        }
+        ids.add(id);
+        let entries = this.annotations.get(id);
+        if (!entries) {
+          entries = /* @__PURE__ */ new Map();
+          this.annotations.set(id, entries);
+        }
+        entries.set(canvasId, annotation);
+      }
+      this.canvases.set(canvasId, ids);
+    }
+    entries(id) {
+      return this.annotations.get(id);
+    }
+    rank(canvasId) {
+      var _a;
+      return (_a = this.order.get(canvasId)) != null ? _a : Infinity;
+    }
+    delete(canvasId) {
+      this.removeEntries(canvasId);
+      this.order.delete(canvasId);
+    }
+    clear() {
+      this.canvases.clear();
+      this.annotations.clear();
+      this.order.clear();
+      this.nextOrder = 0;
+    }
+    removeEntries(canvasId) {
+      var _a;
+      (_a = this.canvases.get(canvasId)) == null ? void 0 : _a.forEach((id) => {
+        const entries = this.annotations.get(id);
+        entries.delete(canvasId);
+        if (entries.size === 0) {
+          this.annotations.delete(id);
+        }
+      });
+      this.canvases.delete(canvasId);
+    }
+  };
+
   // src/image-utils.ts
   var iiifImageRegionUrl = (imageService, region) => {
     const { x, y, width, height } = region;
@@ -53,6 +173,7 @@
   var ZOOM_OUT_FACTOR = 1 / ZOOM_IN_FACTOR;
   var PAGE_LABEL_TOP_PADDING_PX = 28;
   var PAGE_GAP_VIEWPORT_UNITS = 0.06;
+  var PAGE_PREVIEW_BUFFER_VIEWPORTS = 2.5;
   var lazyImageObserver = null;
   var DivaLazyImage = class extends HTMLElement {
     constructor() {
@@ -169,12 +290,18 @@
       this.loadedItems = /* @__PURE__ */ new Map();
       this.pageWaiters = /* @__PURE__ */ new Map();
       this.pageOverlayElements = /* @__PURE__ */ new Map();
+      this.previewLayer = null;
+      this.pagePreviews = /* @__PURE__ */ new Map();
+      this.previewAnnotationIndexes = /* @__PURE__ */ new Set();
       this.annotationData = /* @__PURE__ */ new Map();
+      this.annotationIndex = new AnnotationIndex();
+      this.pageIndexesByCanvas = /* @__PURE__ */ new Map();
       this.annotationOverlayElements = /* @__PURE__ */ new Map();
       this.annotationsVisible = true;
       this.annotationSelectionEnabled = true;
       this.selectedAnnotationId = null;
       this.annotationPanel = null;
+      this.panelAnnotation = null;
       this.annotationPanelIgnoreCloseUntil = 0;
       this.targetIndex = null;
       this.initialPageIndex = 0;
@@ -199,6 +326,11 @@
       this.handleAnimationFinishBound = this.handleAnimationFinish.bind(this);
     }
     connectedCallback() {
+      this.rebuildCanvasPageIndexes();
+      this.annotationIndex.clear();
+      this.annotationData.forEach(
+        (annotations, canvasId) => this.annotationIndex.set(canvasId, annotations, (annotation) => annotation.id)
+      );
       this.style.display = "block";
       this.style.position = "relative";
       if (!this.container) {
@@ -234,7 +366,12 @@
       }
     }
     disconnectedCallback() {
-      var _a;
+      var _a, _b;
+      this.clearPagePreviews();
+      (_a = this.previewLayer) == null ? void 0 : _a.remove();
+      this.previewLayer = null;
+      this.annotationIndex.clear();
+      this.pageIndexesByCanvas.clear();
       this.cancelLoads();
       if (this.loadingTimer !== null) {
         window.clearTimeout(this.loadingTimer);
@@ -258,7 +395,7 @@
         this.viewer.destroy();
         this.viewer = null;
       }
-      (_a = this.scrollbarTrack) == null ? void 0 : _a.remove();
+      (_b = this.scrollbarTrack) == null ? void 0 : _b.remove();
       this.scrollbarTrack = null;
       this.scrollbarThumb = null;
     }
@@ -310,6 +447,13 @@
         viewer.addHandler("pan", () => this.updateScrollbar());
         viewer.addHandler("zoom", () => this.updateScrollbar());
         viewer.addHandler("animation-finish", this.handleAnimationFinishBound);
+        const layer = document.createElement("div");
+        layer.className = "diva-page-previews";
+        layer.setAttribute("aria-hidden", "true");
+        layer.style.cssText = "position:absolute;inset:0;overflow:hidden;pointer-events:none";
+        viewer.canvas.prepend(layer);
+        this.previewLayer = layer;
+        viewer.addHandler("update-viewport", () => this.updatePagePreviews());
       }
     }
     setLayoutMode(mode) {
@@ -330,7 +474,9 @@
         return;
       }
       this.annotationData.clear();
+      this.annotationIndex.clear();
       this.tileSources = tileSources.slice();
+      this.rebuildCanvasPageIndexes();
       this.resourceId = resourceId;
       this.initialPageIndex = Number.isInteger(initialPageIndex) && initialPageIndex >= 0 && initialPageIndex < tileSources.length ? initialPageIndex : 0;
       this.syncViewer();
@@ -341,15 +487,23 @@
       this.resetTileSources(this.tileSources.slice(), this.initialPageIndex);
     }
     setAnnotations(canvasId, annotations) {
+      var _a;
       if (!canvasId || !Array.isArray(annotations)) {
         return;
       }
+      const previous = this.annotationData.get(canvasId);
+      if ((previous == null ? void 0 : previous.length) === annotations.length && annotations.every((annotation, index) => {
+        const old = previous[index];
+        return old.id === annotation.id && old.text === annotation.text && old.html === annotation.html && annotationBodiesEqual(old.bodies, annotation.bodies) && old.imageService === annotation.imageService && old.shape.kind === annotation.shape.kind && old.shape.x === annotation.shape.x && old.shape.y === annotation.shape.y && old.shape.width === annotation.shape.width && old.shape.height === annotation.shape.height && old.shape.value === annotation.shape.value;
+      })) {
+        return;
+      }
+      if (this.panelAnnotation && (previous == null ? void 0 : previous.includes(this.panelAnnotation))) {
+        this.closeAnnotationPanel();
+      }
       this.annotationData.set(canvasId, annotations);
-      this.tileSources.forEach((source, index) => {
-        if (source.canvasId === canvasId) {
-          this.addOrUpdateAnnotationOverlay(index);
-        }
-      });
+      this.annotationIndex.set(canvasId, annotations, (annotation) => annotation.id);
+      (_a = this.pageIndexesByCanvas.get(canvasId)) == null ? void 0 : _a.forEach((index) => this.addOrUpdateAnnotationOverlay(index));
     }
     setAnnotationsVisible(visible) {
       this.annotationsVisible = visible;
@@ -385,31 +539,53 @@
           group.classList.toggle("is-selected", group.dataset.annotationId === annotationId);
         });
       });
-      for (const annotations of this.annotationData.values()) {
-        const annotation = annotations.find((candidate) => candidate.id === annotationId);
-        if (annotation) {
-          const group = Array.from(this.annotationOverlayElements.values()).map(
-            (element) => element.querySelector(`g[data-annotation-id="${CSS.escape(annotationId)}"]`)
-          ).find((candidate) => candidate !== null);
-          this.openAnnotationPanel(annotation, group);
-          return;
-        }
+      const found = this.findAnnotation(annotationId);
+      if (found) {
+        const group = Array.from(this.annotationOverlayElements.values()).map(
+          (element) => element.querySelector(`g[data-annotation-id="${CSS.escape(annotationId)}"]`)
+        ).find((candidate) => candidate !== null);
+        this.openAnnotationPanel(found.annotation, group);
       }
     }
     getImageRegionForAnnotation(annotationId) {
-      var _a, _b;
-      for (const [canvasId, annotations] of this.annotationData) {
-        const annotation = annotations.find((candidate) => candidate.id === annotationId);
-        if (!annotation) {
-          continue;
-        }
-        const index = this.tileSources.findIndex((source) => source.canvasId === canvasId);
-        const group = index >= 0 ? (_b = (_a = this.annotationOverlayElements.get(index)) == null ? void 0 : _a.querySelector(
+      var _a, _b, _c;
+      const found = this.findAnnotation(annotationId);
+      if (found) {
+        const index = (_a = this.pageIndexesByCanvas.get(found.canvasId)) == null ? void 0 : _a[0];
+        const group = index !== void 0 ? (_c = (_b = this.annotationOverlayElements.get(index)) == null ? void 0 : _b.querySelector(
           `g[data-annotation-id="${CSS.escape(annotationId)}"]`
-        )) != null ? _b : void 0 : void 0;
-        return this.annotationExtractUrl(annotation, group);
+        )) != null ? _c : void 0 : void 0;
+        return this.annotationExtractUrl(found.annotation, group);
       }
       return null;
+    }
+    findAnnotation(annotationId) {
+      var _a;
+      let found;
+      let rank = Infinity;
+      (_a = this.annotationIndex.entries(annotationId)) == null ? void 0 : _a.forEach((annotation, canvasId) => {
+        const candidateRank = this.annotationIndex.rank(canvasId);
+        if (candidateRank < rank) {
+          rank = candidateRank;
+          found = { canvasId, annotation };
+        }
+      });
+      return found;
+    }
+    rebuildCanvasPageIndexes() {
+      this.pageIndexesByCanvas.clear();
+      this.tileSources.forEach((source, index) => {
+        const canvasId = source.canvasId;
+        if (typeof canvasId !== "string") {
+          return;
+        }
+        let indexes = this.pageIndexesByCanvas.get(canvasId);
+        if (!indexes) {
+          indexes = [];
+          this.pageIndexesByCanvas.set(canvasId, indexes);
+        }
+        indexes.push(index);
+      });
     }
     setTileSourceResolver(resolver) {
       this.tileSourceResolver = resolver;
@@ -463,6 +639,7 @@
       }
       this.cancelLoads();
       this.tileSources = tileSources;
+      this.rebuildCanvasPageIndexes();
       this.initialPageIndex = Number.isInteger(initialPageIndex) && initialPageIndex >= 0 && initialPageIndex < tileSources.length ? initialPageIndex : 0;
       this.hasFitFirstPage = false;
       this.isViewportInitialized = false;
@@ -470,6 +647,7 @@
       this.loadingIndexes.clear();
       this.unavailableIndexes.clear();
       this.loadedItems.clear();
+      this.clearPagePreviews();
       this.clearPageOverlays();
       this.clearAnnotationOverlays();
       this.targetIndex = tileSources.length > 0 ? this.initialPageIndex : null;
@@ -548,6 +726,110 @@
         this.ensurePageLoaded(this.targetIndex);
       }
     }
+    setPagePreviewPolicies(policies) {
+      const changed = new Map(policies.map((policy) => [policy.sourceId, policy.crossOrigin]));
+      this.tileSources.forEach((source, index) => {
+        if (source.preview && changed.has(source.sourceId)) {
+          source.preview = { ...source.preview, crossOrigin: changed.get(source.sourceId) };
+          this.removePagePreview(index);
+        }
+      });
+      this.updatePagePreviews();
+    }
+    removePagePreview(index) {
+      const image = this.pagePreviews.get(index);
+      if (image) {
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute("src");
+        image.remove();
+        this.pagePreviews.delete(index);
+      }
+    }
+    clearPagePreviews() {
+      this.pagePreviews.forEach((_image, index) => this.removePagePreview(index));
+      this.previewAnnotationIndexes.clear();
+    }
+    updatePagePreviews() {
+      var _a;
+      const viewport = (_a = this.viewer) == null ? void 0 : _a.viewport;
+      if (!viewport || !this.previewLayer || !this.isViewportInitialized) {
+        return;
+      }
+      const bounds = viewport.getBounds(true);
+      const buffer = bounds.height * PAGE_PREVIEW_BUFFER_VIEWPORTS;
+      const range = this.indicesForRange(Math.max(0, bounds.y - buffer), bounds.y + bounds.height + buffer);
+      this.pagePreviews.forEach((_image, index) => {
+        if (!range || index < range[0] || index > range[1]) {
+          this.removePagePreview(index);
+        }
+      });
+      if (!range) {
+        return;
+      }
+      const annotationIndexes = [];
+      for (let index = range[0]; index <= range[1]; index += 1) {
+        const source = this.tileSources[index];
+        const preview = source == null ? void 0 : source.preview;
+        if (!(preview == null ? void 0 : preview.url) || !preview.crossOrigin || this.unavailableIndexes.has(index) || source.isStatic && preview.url === source.url) {
+          this.removePagePreview(index);
+          continue;
+        }
+        let image = this.pagePreviews.get(index);
+        if (!this.previewAnnotationIndexes.has(index)) {
+          this.previewAnnotationIndexes.add(index);
+          annotationIndexes.push(index);
+        }
+        const item = this.loadedItems.get(index);
+        if (!image && (item == null ? void 0 : item.getFullyLoaded())) {
+          continue;
+        }
+        if (!image) {
+          image = document.createElement("img");
+          image.className = "diva-page-preview";
+          image.dataset.pageIndex = String(index);
+          image.alt = "";
+          image.draggable = false;
+          image.style.cssText = "position:absolute;object-fit:contain;pointer-events:none";
+          if (preview.crossOrigin === "use-credentials") {
+            image.crossOrigin = "use-credentials";
+          }
+          const current = image;
+          let fallback = false;
+          image.onerror = () => {
+            if (this.pagePreviews.get(index) !== current) {
+              return;
+            }
+            if (!fallback && preview.crossOrigin === "anonymous" && preview.fallbackUrl && preview.fallbackUrl !== preview.url && !(source.isStatic && preview.fallbackUrl === source.url)) {
+              fallback = true;
+              current.src = preview.fallbackUrl;
+            } else {
+              current.dataset.failed = "true";
+              current.hidden = true;
+            }
+          };
+          this.pagePreviews.set(index, image);
+          this.previewLayer.appendChild(image);
+          image.src = preview.url;
+        }
+        const position = viewport.pixelFromPoint(
+          new OpenSeadragon.Point(this.pageXOffsets[index] || 0, this.pageOffsets[index] || 0),
+          true
+        );
+        const size = viewport.deltaPixelsFromPoints(new OpenSeadragon.Point(1, this.pageHeights[index] || 1), true);
+        image.style.left = `${position.x}px`;
+        image.style.top = `${position.y}px`;
+        image.style.width = `${size.x}px`;
+        image.style.height = `${size.y}px`;
+        image.hidden = image.dataset.failed === "true" || Boolean((item == null ? void 0 : item.getFullyLoaded()) && !item.needsDraw());
+      }
+      if (annotationIndexes.length > 0) {
+        this.emitCustomEvent("diva-preview-annotations-requested", {
+          indexes: annotationIndexes,
+          resourceId: this.resourceId
+        });
+      }
+    }
     ensurePageLoaded(index) {
       if (index < 0 || index >= this.tileSources.length || index >= this.pageOffsets.length) {
         return;
@@ -607,6 +889,13 @@
           item.setHeight(currentHeight, true);
           this.loadedIndexes.add(index);
           this.loadedItems.set(index, item);
+          item.addHandler("fully-loaded-change", () => {
+            requestAnimationFrame(() => {
+              if (token === this.loadToken && this.loadedItems.get(index) === item) {
+                this.updatePagePreviews();
+              }
+            });
+          });
           this.resolvePageWaiters(index, item);
           this.addOrUpdatePageOverlay(index);
           this.addOrUpdateAnnotationOverlay(index);
@@ -861,6 +1150,7 @@
         item.setWidth(1, true);
         item.setHeight(height, true);
         this.addOrUpdatePageOverlay(index);
+        this.positionAnnotationOverlay(index);
       });
     }
     addOrUpdatePageOverlay(index) {
@@ -868,6 +1158,7 @@
         return;
       }
       let element = this.pageOverlayElements.get(index);
+      const isNew = !element;
       const isRightAligned = index % 2 === 0;
       if (!element) {
         element = document.createElement("div");
@@ -889,12 +1180,13 @@
       element.textContent = this.pageLabels[index] || `Page ${index + 1}`;
       const xOffset = (this.pageXOffsets[index] || 0) + (isRightAligned ? 1 : 0);
       const yOffset = this.pageOffsets[index] || 0;
-      this.removeOverlay(element);
-      this.viewer.addOverlay({
-        element,
-        location: new OpenSeadragon.Point(xOffset, yOffset),
-        placement: isRightAligned ? OpenSeadragon.Placement.BOTTOM_RIGHT : OpenSeadragon.Placement.BOTTOM_LEFT
-      });
+      const location2 = new OpenSeadragon.Point(xOffset, yOffset);
+      const placement = isRightAligned ? OpenSeadragon.Placement.BOTTOM_RIGHT : OpenSeadragon.Placement.BOTTOM_LEFT;
+      if (isNew) {
+        this.viewer.addOverlay({ element, location: location2, placement });
+      } else {
+        this.viewer.updateOverlay(element, location2, placement);
+      }
     }
     clearPageOverlays() {
       this.clearOverlays(this.pageOverlayElements);
@@ -907,6 +1199,7 @@
       const canvasId = (_a = this.tileSources[index]) == null ? void 0 : _a.canvasId;
       const annotations = typeof canvasId === "string" ? this.annotationData.get(canvasId) : void 0;
       let element = this.annotationOverlayElements.get(index);
+      const isNew = !element;
       if (!annotations || annotations.length === 0) {
         if (element) {
           this.removeOverlay(element);
@@ -921,14 +1214,18 @@
         this.annotationOverlayElements.set(index, element);
       }
       element.classList.toggle("is-hidden", !this.annotationsVisible);
+      this.buildAnnotationOverlayContent(element, annotations);
+      this.positionAnnotationOverlay(index, isNew);
+    }
+    buildAnnotationOverlayContent(element, annotations) {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", `0 0 ${this.pageWidth(index)} ${this.pageHeightPixels(index)}`);
       svg.setAttribute("preserveAspectRatio", "none");
       svg.setAttribute("width", "100%");
       svg.setAttribute("height", "100%");
       const tooltip = document.createElement("div");
       tooltip.className = "diva-annotation-tooltip";
       tooltip.setAttribute("role", "tooltip");
+      tooltip.dir = "auto";
       annotations.forEach((annotation) => {
         const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
         group.setAttribute("data-annotation-id", annotation.id);
@@ -936,18 +1233,48 @@
         group.classList.toggle("is-selected", annotation.id === this.selectedAnnotationId);
         if (annotation.text) {
           group.setAttribute("aria-label", annotation.text);
+          let text;
+          let preview;
           const showTooltip = (event) => {
+            var _a;
             const bounds = element.getBoundingClientRect();
             if (!this.annotationsVisible || !this.annotationSelectionEnabled) {
               tooltip.hidden = true;
               return;
             }
+            text != null ? text : text = annotationTooltipText(
+              (_a = annotation.bodies) != null ? _a : [{ value: annotation.html || annotation.text }],
+              (html) => this.sanitizeAnnotationHtml(html)
+            );
+            preview != null ? preview : preview = annotationTooltipPreview(text);
+            group.setAttribute("aria-label", text || "Annotation");
+            if (!preview) {
+              tooltip.hidden = true;
+              return;
+            }
             const x = event ? event.clientX - bounds.left : bounds.width / 2;
             const y = event ? event.clientY - bounds.top : bounds.height / 2;
-            tooltip.textContent = annotation.text;
+            const viewport = this.getBoundingClientRect();
+            tooltip.textContent = preview;
+            tooltip.style.maxWidth = `min(36rem, ${Math.max(0, viewport.width - 16)}px)`;
             tooltip.style.left = `${x}px`;
             tooltip.style.top = `${y}px`;
             tooltip.hidden = false;
+            const previewBounds = tooltip.getBoundingClientRect();
+            const dx = Math.max(
+              viewport.left + 8 - previewBounds.left,
+              Math.min(0, viewport.right - 8 - previewBounds.right)
+            );
+            const dy = Math.max(
+              viewport.top + 8 - previewBounds.top,
+              Math.min(0, viewport.bottom - 8 - previewBounds.bottom)
+            );
+            if (dx !== 0) {
+              tooltip.style.left = `${x + dx}px`;
+            }
+            if (dy !== 0) {
+              tooltip.style.top = `${y + dy}px`;
+            }
           };
           group.addEventListener("mouseenter", showTooltip);
           group.addEventListener("mousemove", showTooltip);
@@ -997,16 +1324,32 @@
       });
       tooltip.hidden = true;
       element.replaceChildren(svg, tooltip);
-      this.removeOverlay(element);
-      this.viewer.addOverlay({
-        element,
-        location: new OpenSeadragon.Rect(
-          this.pageXOffsets[index] || 0,
-          this.pageOffsets[index] || 0,
-          1,
-          this.pageHeights[index] || 1
-        )
-      });
+    }
+    positionAnnotationOverlay(index, add = false) {
+      var _a;
+      const element = this.annotationOverlayElements.get(index);
+      if (!this.viewer || !element) {
+        return;
+      }
+      (_a = element.querySelector("svg")) == null ? void 0 : _a.setAttribute(
+        "viewBox",
+        `0 0 ${this.pageWidth(index)} ${this.pageHeightPixels(index)}`
+      );
+      const tooltip = element.querySelector(".diva-annotation-tooltip");
+      if (tooltip) {
+        tooltip.hidden = true;
+      }
+      const location2 = new OpenSeadragon.Rect(
+        this.pageXOffsets[index] || 0,
+        this.pageOffsets[index] || 0,
+        1,
+        this.pageHeights[index] || 1
+      );
+      if (add) {
+        this.viewer.addOverlay({ element, location: location2 });
+      } else {
+        this.viewer.updateOverlay(element, location2);
+      }
     }
     pageWidth(index) {
       var _a, _b;
@@ -1072,6 +1415,7 @@
       }
     }
     clearAnnotationOverlays() {
+      this.closeAnnotationPanel();
       this.clearOverlays(this.annotationOverlayElements);
     }
     removeOverlay(element) {
@@ -1117,9 +1461,11 @@
       }
     }
     openAnnotationPanel(annotation, annotationGroup) {
+      var _a;
       if (!this.container) {
         return;
       }
+      this.panelAnnotation = annotation;
       this.selectedAnnotationId = annotation.id;
       this.annotationOverlayElements.forEach((element) => {
         element.querySelectorAll("g[data-annotation-id]").forEach((group) => {
@@ -1228,7 +1574,21 @@
         content.append(previewControls, previewFrame);
         window.requestAnimationFrame(updatePreviewLayout);
       }
-      content.appendChild(this.sanitizeAnnotationHtml(annotation.html || annotation.text));
+      for (const body of (_a = annotation.bodies) != null ? _a : [{ value: annotation.html || annotation.text }]) {
+        const section = document.createElement("div");
+        section.className = "diva-annotation-body";
+        section.dir = "auto";
+        if (body.language) {
+          section.lang = body.language;
+        }
+        if (isPlainTextBody(body)) {
+          section.style.whiteSpace = "pre-wrap";
+          section.textContent = body.value;
+        } else {
+          section.appendChild(this.sanitizeAnnotationHtml(body.value));
+        }
+        content.appendChild(section);
+      }
       if (imageLink) {
         content.appendChild(imageLink);
       }
@@ -1294,8 +1654,10 @@
       }
     }
     closeAnnotationPanel() {
+      this.panelAnnotation = null;
       if (this.annotationPanel) {
         this.annotationPanel.hidden = true;
+        this.annotationPanel.replaceChildren();
       }
     }
     sanitizeAnnotationHtml(markup) {
@@ -1324,6 +1686,7 @@
         return /^(https?:|mailto:|tel:|\/|\.\/|\.\.\/|#|\?)/.test(normalized) || !normalized.includes(":");
       };
       const copy = (node, parent) => {
+        var _a;
         if (node.nodeType === Node.TEXT_NODE) {
           parent.appendChild(document.createTextNode(node.textContent || ""));
           return;
@@ -1337,6 +1700,14 @@
           return;
         }
         const element = document.createElement(tag);
+        const direction = (_a = node.getAttribute("dir")) == null ? void 0 : _a.toLowerCase();
+        if (direction === "ltr" || direction === "rtl" || direction === "auto") {
+          element.setAttribute("dir", direction);
+        }
+        const language = node.getAttribute("lang");
+        if (language) {
+          element.setAttribute("lang", language);
+        }
         if (tag === "a") {
           const href = node.getAttribute("href");
           if (href && safeUrl(href)) {
@@ -1472,9 +1843,9 @@
       const end = this.getRowEndIndex(start);
       return Array.from({ length: end - start + 1 }, (_value, offset) => start + offset);
     }
-    isPageLoaded(index, sourceId) {
+    isPageLoaded(index, sourceId, resourceId) {
       var _a;
-      return ((_a = this.tileSources[index]) == null ? void 0 : _a.sourceId) === sourceId && this.loadedIndexes.has(index);
+      return this.resourceId === resourceId && ((_a = this.tileSources[index]) == null ? void 0 : _a.sourceId) === sourceId && this.loadedIndexes.has(index);
     }
     next() {
       const visible = this.getVisiblePageIndexes();
@@ -1566,9 +1937,8 @@
       const speed = 0.75;
       const panY = rect.height > 0 ? deltaY / rect.height * speed : 0;
       const center = viewport.getCenter(true);
-      const nextCenter = new OpenSeadragon.Point(this.getCenterX(), center.y + panY);
+      const nextCenter = new OpenSeadragon.Point(center.x, center.y + panY);
       viewport.panTo(nextCenter, true);
-      this.recenterBoundsX();
       this.clampTop();
       this.clampBottom();
       this.maybeEmitPageChange();
@@ -1630,7 +2000,7 @@
       }
       const clampedCenterY = bounds.height / 2 + minTop;
       this.isClamping = true;
-      vp.panTo(new OpenSeadragon.Point(this.getCenterX(), clampedCenterY), true);
+      vp.panTo(new OpenSeadragon.Point(vp.getCenter(false).x, clampedCenterY), true);
       vp.applyConstraints();
       this.isClamping = false;
     }
@@ -1654,7 +2024,7 @@
       }
       const clampedCenterY = maxBottom - bounds.height / 2;
       this.isClamping = true;
-      vp.panTo(new OpenSeadragon.Point(this.getCenterX(), clampedCenterY), true);
+      vp.panTo(new OpenSeadragon.Point(vp.getCenter(false).x, clampedCenterY), true);
       vp.applyConstraints();
       this.isClamping = false;
     }
@@ -1924,7 +2294,8 @@
         const viewportHeight = this.viewer.viewport.getBounds(true).height;
         const maxScroll = totalHeight - viewportHeight;
         const newScrollY = scrollProgress * maxScroll;
-        this.scrollToOffset(newScrollY);
+        const center = this.viewer.viewport.getCenter(true);
+        this.viewer.viewport.panTo(new OpenSeadragon.Point(center.x, newScrollY + viewportHeight / 2), true);
       };
       const onMouseUp = () => {
         if (isDragging) {
@@ -1959,7 +2330,8 @@
         const viewportHeight = this.viewer.viewport.getBounds(true).height;
         const maxScroll = totalHeight - viewportHeight;
         const newScrollY = scrollProgress * maxScroll;
-        this.scrollToOffset(newScrollY);
+        const center = this.viewer.viewport.getCenter(true);
+        this.viewer.viewport.panTo(new OpenSeadragon.Point(center.x, newScrollY + viewportHeight / 2), true);
       });
     }
   };
@@ -1967,7 +2339,7 @@
   customElements.define("osd-viewer", OsdViewer);
 
   // cache/diva.css
-  var diva_default = ":root{--diva-accent:#5a6bff;--diva-accent-light:#9aa4ff;--diva-annotation-fill:#00bfff1f;--diva-annotation-fill-hover:#3030307a;--diva-annotation-stroke:#00bfff;--diva-annotation-stroke-hover:#d83a3a;--diva-annotation-stroke-width:2;--diva-background-color:#fff;--diva-border:#d9d4ce;--diva-danger:#d32f2f;--diva-dark-bg:#1c1d22;--diva-dark-border:#2c2d33;--diva-overlay-bg:#10111499;--diva-page-bg:#f7f5f1;--diva-shadow-dark:#00000026;--diva-shadow-focus:#9aa4ff59;--diva-shadow-modal:#00000040;--diva-surface:#e6e1dc;--diva-text-muted:#5c5a55;--diva-text-muted-on-dark:#ffffffb3;--diva-text-primary:#1b1b1b;--diva-toolbar-button-icon:#2c2d33;--diva-white:#fff;--diva-font-lg:16px;--diva-font-md:13px;--diva-font-sm:11px;--diva-font-xs:10px;--diva-font-xl:20px}.diva-app,.diva-app *{box-sizing:border-box}.diva-list-reset{margin:0;padding:0;list-style:none}.diva-ui-button{text-align:left;cursor:pointer;color:var(--diva-text-primary);font-size:var(--diva-font-lg);background-color:#0000;border:none;padding:0}.diva-ui-button:hover{background-color:var(--diva-surface)}.diva-ui-card{cursor:pointer;border-radius:0;width:100%;padding:6px}.diva-ui-card--dark{background-color:var(--diva-dark-bg)}.diva-thumbs-item:focus-visible,.diva-page-view-choice:focus-visible,.diva-canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-annotation-overlay{pointer-events:none;width:100%;height:100%;position:relative}.diva-annotation-overlay.is-hidden{visibility:hidden!important}.diva-annotation-overlay svg{width:100%;height:100%;overflow:visible}.diva-annotation-overlay g{pointer-events:all;cursor:help}.diva-annotation-tooltip{z-index:101;color:#fff;max-width:min(18rem,75%);font-size:var(--diva-font-sm);pointer-events:none;background:#1c1d22f0;border:1px solid #ffffff2e;padding:6px 8px;line-height:1.35;position:absolute;transform:translate(10px,calc(-100% - 10px));box-shadow:0 4px 10px #00000047}.diva-annotation-panel{z-index:1000;color:#fff;background:#1c1d22f7;border:1px solid #fff3;width:min(24rem,100% - 28px);max-height:min(50%,24rem);padding:12px;position:absolute;bottom:14px;left:14px;overflow:auto;box-shadow:0 8px 20px #00000059}.osd-container{position:relative}.diva-annotation-panel-close{color:#fff;cursor:pointer;background-color:#000;border:1px solid #fff;border-radius:0;justify-content:center;align-items:center;height:30px;margin:0;padding:6px;display:inline-flex;position:absolute;top:12px;right:12px;width:30px!important}.diva-annotation-panel-close svg{fill:currentColor;flex:none;width:16px;height:16px}.diva-annotation-panel-close:hover,.diva-annotation-panel-close:focus-visible{background-color:#222}.diva-annotation-panel-content{padding-top:36px}.diva-annotation-panel-preview-controls{position:absolute;top:12px;right:50px}.diva-annotation-panel-content a{color:#9aa4ff}.diva-annotation-panel-content img{max-width:100%;height:auto}.diva-annotation-panel-rotate{color:#fff;cursor:pointer;background-color:#000;border:1px solid #fff;border-radius:0;justify-content:center;align-items:center;height:30px;padding:6px;font-size:18px;line-height:1;display:inline-flex;width:30px!important;margin:0!important}.diva-annotation-panel-rotate:hover,.diva-annotation-panel-rotate:focus-visible{background-color:#222}.diva-annotation-panel-image-link{color:#9aa4ff;font-size:var(--diva-font-sm);overflow-wrap:anywhere;margin:0 0 10px;line-height:1.3;display:block}.diva-annotation-rect,.diva-annotation-svg-shape{fill:var(--diva-annotation-fill,#00bfff1f);fill-opacity:1;stroke:var(--diva-annotation-stroke,#00bfff);stroke-width:var(--diva-annotation-stroke-width,2);vector-effect:non-scaling-stroke;transition:fill .12s ease-out,stroke .12s ease-out}.diva-annotation-overlay g[data-annotation-id]:hover .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id]:hover .diva-annotation-svg-shape,.diva-annotation-overlay g[data-annotation-id]:focus .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id]:focus .diva-annotation-svg-shape,.diva-annotation-overlay g[data-annotation-id].is-selected .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id].is-selected .diva-annotation-svg-shape{fill:var(--diva-annotation-fill-hover,#3030307a);stroke:var(--diva-annotation-stroke-hover,#d83a3a)}.diva-thumbs-image,.diva-page-view-choice-thumb{border-radius:0;width:100%;height:auto;display:block}.diva-metadata-panel,.diva-contents-panel{height:100%;padding:12px;overflow:auto}.diva-app{color-scheme:light;flex-direction:column;flex:1;height:100%;min-height:0;padding:12px 24px;display:flex}.diva-app.is-fullscreen{height:100vh;min-height:100vh;padding:0}.diva-app-header{font-size:var(--diva-font-lg);align-items:center;gap:12px;margin-bottom:8px;font-weight:600;display:flex}.diva-app-title{font-size:var(--diva-font-xl);text-align:left;color:var(--diva-text-primary);margin-bottom:6px;font-weight:600}.diva-app-title.is-fullscreen{color:var(--diva-white)}.diva-app-body{flex:1;align-items:stretch;gap:0;height:100%;min-height:0;display:flex;position:relative}.diva-canvas-column{flex-direction:column;flex:1;gap:24px;min-width:0;min-height:0;display:flex}.diva-canvas-column.is-fullscreen{height:100%}.diva-canvas-wrapper{flex:1;min-height:0;position:relative}.diva-canvas{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);border-radius:0;width:100%;height:100%;overflow:hidden}.diva-canvas.is-fullscreen{flex:1}.diva-metadata-body{flex-direction:column;gap:10px;display:flex}.diva-metadata-item{flex-direction:column;gap:0;display:flex}.diva-metadata-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);letter-spacing:.05em;font-weight:600;line-height:1.3}.diva-metadata-value{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px;line-height:1.3}.diva-metadata-value>:first-child{margin-top:0}.diva-metadata-value>:last-child{margin-bottom:0}.diva-contents-empty{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px}.diva-sidebar-resizer,.diva-collection-resizer{width:12px;font-size:var(--diva-font-xl);color:var(--diva-white);background-color:var(--diva-text-muted);cursor:col-resize;user-select:none;touch-action:none;flex:0 0 12px;justify-content:center;align-self:stretch;align-items:center;line-height:1;display:flex}.diva-sidebar-resizer:hover,.diva-sidebar-resizer:active,.diva-collection-resizer:hover,.diva-collection-resizer:active{cursor:col-resize}.diva-sidebar-resizer.is-hidden,.diva-collection-resizer.is-hidden{display:none}.diva-sidebar-panel.is-hidden,.diva-collection-panel.is-hidden{opacity:0;pointer-events:none;border-width:0;padding:0;overflow:hidden}.diva-required-statement-dock{justify-content:flex-end;width:100%;margin-top:12px;padding-right:8px;display:flex}.diva-required-statement{font-size:var(--diva-font-md);color:var(--diva-text-muted);text-align:right;min-width:250px;max-width:20vw;line-height:1.4}.diva-scrollbar-track{background:var(--diva-surface);border:1px solid var(--diva-border);z-index:100;border-radius:0;width:12px;position:absolute;top:4px;bottom:4px;right:4px}.diva-scrollbar-thumb{background:var(--diva-text-muted);cursor:pointer;border-radius:0;min-height:30px;position:absolute;left:1px;right:1px}.diva-scrollbar-thumb:hover{background:var(--diva-text-primary)}.diva-scrollbar-thumb:active{background:var(--diva-dark-border)}.diva-throbber-overlay{pointer-events:none;justify-content:center;align-items:center;display:flex;position:absolute;inset:0}.diva-viewer-zoom-indicator{z-index:30;pointer-events:none;font-size:var(--diva-font-sm);color:var(--diva-white);background-color:#0000008c;border-radius:0;padding:4px 8px;font-weight:600;position:absolute;bottom:12px;left:12px}.diva-throbber{background-color:var(--diva-white);width:64px;height:64px;box-shadow:0 8px 16px var(--diva-shadow-dark);border-radius:0;flex-wrap:wrap;padding:8px;display:flex}.diva-throbber-cube{background-color:var(--diva-accent);width:16px;height:16px;animation-name:diva-cube-grid;animation-duration:1.3s;animation-timing-function:ease-in-out;animation-iteration-count:infinite}@keyframes diva-cube-grid{0%{transform:scale(1)}35%{transform:scale(0)}70%{transform:scale(1)}to{transform:scale(1)}}@media (width<=720px){.diva-app{padding:12px}.diva-app-body{flex-direction:column;gap:12px}.diva-sidebar-resizer,.diva-collection-resizer{display:none}}.diva-image-unavailable{background:color-mix(in srgb, var(--diva-background-color,#fff) 92%, transparent);box-sizing:border-box;text-align:center;border:1px solid #999;flex-direction:column;justify-content:center;align-items:center;padding:1rem;display:flex}.diva-image-unavailable button{cursor:pointer}.diva-sidebar-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;flex:none;width:320px;height:100%;min-height:0;display:flex;overflow:hidden}.diva-sidebar-tabs{border:1px solid var(--diva-surface);background-color:var(--diva-surface);border-radius:0;display:flex}.diva-sidebar-tab-button{font-size:var(--diva-font-md);text-transform:uppercase;cursor:pointer;color:var(--diva-text-muted);background-color:#0000;border:none;flex:1;padding:10px 12px}.diva-sidebar-tab-button.is-active{background-color:var(--diva-white);font-weight:600}.diva-sidebar-content{background-color:var(--diva-page-bg);flex-direction:column;flex:1;min-height:0;display:flex;position:relative;overflow:hidden}.diva-sidebar-pane{flex:1;width:100%;min-height:0}.diva-sidebar-pane.is-hidden{display:none}.diva-thumbs{scroll-behavior:smooth;background-color:var(--diva-dark-bg);flex:1;grid-template-columns:repeat(3,minmax(0,1fr));align-content:start;gap:10px;width:100%;height:100%;min-height:0;padding:12px;display:grid;overflow-y:auto}.diva-thumbs-item{border:1px solid var(--diva-dark-border);text-align:left;flex-direction:column;justify-content:flex-start;align-items:stretch;max-width:none;display:flex}.diva-thumbs-item.is-active{border-color:var(--diva-accent-light);box-shadow:0 0 0 var(--diva-shadow-focus);background-color:var(--diva-dark-bg);outline:2px solid var(--diva-accent-light);outline-offset:2px}.diva-thumbs-lazy-image{background:var(--diva-dark-bg);width:100%;min-height:96px;display:block}.diva-thumbs-image--protected,.diva-thumbs-image--unavailable{background:var(--diva-dark-bg);min-height:96px}.diva-thumbs-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted-on-dark);margin-top:6px;line-height:1.3}.diva-thumbs-label.is-active{color:var(--diva-white)}.diva-contents-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:10px;font-weight:600}.diva-contents-view-tabs{gap:8px;margin-bottom:12px;display:flex}.diva-contents-view-button{background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);color:var(--diva-text-muted);cursor:pointer;border-radius:0;padding:4px 10px}.diva-contents-view-button.is-active{background-color:var(--diva-white);border-color:var(--diva-accent);color:var(--diva-text-primary)}.diva-contents-list-nested{border-left:1px solid var(--diva-border);margin-top:6px;margin-left:6px;padding-left:13px}.diva-contents-item{margin-bottom:6px}.diva-contents-heading{align-items:baseline;display:flex}.diva-contents-disclosure{color:var(--diva-text-muted);cursor:pointer;text-align:center;flex:0 0 1.25rem}.diva-contents-disclosure:hover{color:var(--diva-accent)}.diva-contents-meta{border:1px solid var(--diva-dark-border);flex-direction:column;gap:10px;margin-top:6px;padding:8px;display:flex}.diva-contents-meta dl>div+div{border-top:1px solid var(--diva-dark-border);margin-top:.75rem;padding-top:.75rem}.diva-contents-meta dt{font-weight:600}.diva-contents-meta dd{margin:0 0 .5rem 1rem}.diva-contents-meta dd:last-child{margin-bottom:0}.diva-contents-button:hover{color:var(--diva-accent)}.diva-contents-button.is-current{font-weight:600}@media (width<=720px){.diva-sidebar-panel{height:auto;width:100%!important}.diva-sidebar-panel.is-overlay{z-index:100;width:100%;height:100%;box-shadow:0 12px 24px var(--diva-shadow-dark);border-radius:0;position:absolute;inset:0}.diva-sidebar-panel.is-mobile-hidden{display:none}.diva-thumbs{height:auto;overflow:auto hidden}.diva-thumbs-item{min-width:120px}}.diva-canvas-toolbar-stack{flex-direction:column;gap:4px;width:100%;min-width:0;display:flex}.diva-canvas-toolbar{align-items:center;width:100%;margin-bottom:0;display:flex}.diva-canvas-toolbar-section{flex:none;align-items:center;gap:5px;min-width:0;display:flex}.diva-canvas-toolbar-section.is-right{flex:none;margin-left:auto}.diva-canvas-toolbar-end{align-items:center;gap:8px;min-width:0;margin-left:auto;display:flex}.diva-canvas-toolbar-end .diva-canvas-toolbar-section.is-right{margin-left:0}.diva-canvas-toolbar-item{flex:none;justify-content:center;align-items:center;width:34px;height:34px;display:flex;position:relative}.diva-canvas-toolbar-button{width:30px;height:30px;color:var(--diva-toolbar-button-icon);box-shadow:none;cursor:pointer;background-color:#e2e2e2f0;border:1px solid #2c2d3373;border-radius:0;justify-content:center;align-items:center;padding:6px;display:flex}.diva-canvas-toolbar-button svg{flex:none;width:16px;height:16px}.diva-canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-canvas-toolbar-button:hover{border-color:var(--diva-toolbar-button-icon);background-color:#d6d6d6fa}.diva-canvas-toolbar-button.is-fullscreen{color:var(--diva-white);background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-button.is-fullscreen:hover{border-color:var(--diva-white);background-color:#606874b8}.diva-canvas-toolbar-button.is-disabled{opacity:.4;cursor:not-allowed}.diva-canvas-toolbar-button.is-disabled:hover{background-color:#e2e2e2f0;border-color:#2c2d3373}.diva-canvas-toolbar-button.is-fullscreen.is-disabled:hover{background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-item:after{z-index:80;max-width:160px;color:var(--diva-white);content:attr(data-tooltip);font-size:var(--diva-font-xs);letter-spacing:.02em;opacity:0;pointer-events:none;text-align:center;visibility:hidden;white-space:normal;word-break:normal;background-color:#1c1d22f2;border:1px solid #ffffff2e;border-radius:0;width:max-content;padding:5px 7px;font-weight:600;line-height:1.2;transition:opacity .12s,transform .12s;position:absolute;top:calc(100% + 7px);left:50%;transform:translate(-50%,-3px);box-shadow:0 4px 10px #0003}.diva-canvas-toolbar-item:hover:after,.diva-canvas-toolbar-item:has(.diva-canvas-toolbar-button:focus-visible):after{opacity:1;visibility:visible;transform:translate(-50%)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:after{left:auto;right:0;transform:translateY(-3px)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:hover:after,.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:has(.diva-canvas-toolbar-button:focus-visible):after{transform:translate(0)}.diva-canvas-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:100%}.diva-canvas-toolbar-end .diva-canvas-label{overflow-wrap:normal;text-align:right;white-space:nowrap;word-break:normal;flex:auto;width:auto;min-width:0;max-width:min(42vw,42rem);overflow:hidden}.diva-canvas-label.is-fullscreen{color:var(--diva-white)}.diva-status{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:0}.diva-status.is-error{color:var(--diva-danger)}@media (width<=720px){.diva-canvas-toolbar{flex-wrap:wrap;gap:5px}.diva-canvas-toolbar-end{justify-content:flex-end;width:100%;margin-left:0}.diva-canvas-toolbar-item{width:32px;height:32px}.diva-canvas-toolbar-button{width:28px;height:28px;padding:6px}.diva-canvas-toolbar-button svg{width:15px;height:15px}.diva-canvas-label,.diva-status{display:none}}.diva-modal-overlay{background-color:var(--diva-overlay-bg);z-index:100;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.diva-viewer-status-overlay{background-color:var(--diva-overlay-bg);z-index:40;justify-content:center;align-items:center;padding:24px;display:flex;position:absolute;inset:0}.diva-modal-overlay.is-fullscreen{padding:0}.diva-modal{background-color:var(--diva-page-bg);color:var(--diva-text-primary);width:min(1440px,96vw);max-height:90vh;box-shadow:0 20px 40px var(--diva-shadow-modal);border-radius:0;flex-direction:column;display:flex}.diva-modal.is-narrow{width:min(960px,94vw)}.diva-modal.is-page-view{height:80vh;max-height:80vh}.diva-modal.is-fullscreen{border-radius:0;width:100vw;height:100vh;max-height:100vh}.diva-modal-header{justify-content:space-between;align-items:center;padding:16px 20px 0;display:flex}.diva-modal-actions{gap:8px;display:flex}.diva-modal-close-action .diva-canvas-toolbar-button{color:var(--diva-danger);box-shadow:none;-webkit-backdrop-filter:none;background-color:#0000;border:none;width:auto;height:auto;padding:2px}.diva-modal-close-action .diva-canvas-toolbar-button:hover{background-color:#d32f2f1f;border-color:#0000}.diva-modal-close-action .diva-canvas-toolbar-item{width:32px}.diva-modal-title-stack{flex-direction:column;gap:4px;display:flex}.diva-modal-title{font-size:var(--diva-font-lg);font-weight:600}.diva-modal-subtitle{font-size:var(--diva-font-lg);color:var(--diva-text-primary)}.diva-modal-subtitle.is-muted{font-size:var(--diva-font-md)}.diva-modal-body{flex:1;grid-template-columns:minmax(0,1fr) 240px;gap:16px;min-height:0;padding:16px 20px 20px;display:grid}.diva-modal-body.is-no-gap{gap:0}.diva-modal-body.is-two-column{grid-template-columns:minmax(0,1fr) 200px;align-items:start}.diva-modal-body.is-no-sidebar{grid-template-columns:minmax(0,1fr)}.diva-modal-body.is-with-choices{grid-template-columns:120px minmax(0,1fr) 240px}.diva-modal-body.is-with-choices-no-sidebar{grid-template-columns:120px minmax(0,1fr)}.diva-modal-viewer{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);height:100%;overflow:hidden}.diva-modal-canvas{width:100%;height:100%;display:block}.diva-modal-sidebar{background-color:var(--diva-white);border-top:1px solid var(--diva-border);border-right:1px solid var(--diva-border);border-bottom:1px solid var(--diva-border);border-radius:0;padding:16px;overflow:auto}.diva-filter-access-warning{color:var(--diva-danger);background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);margin:0 0 12px;padding:8px;line-height:1.4}.diva-manifest-info-logo-wrap{text-align:center;flex-direction:column;align-items:center;gap:8px;display:flex}.diva-manifest-info-logo{width:100%;max-width:180px;height:auto}.diva-page-view-choices{background-color:var(--diva-dark-bg);border-radius:0;flex-direction:column;gap:8px;padding:8px;display:flex;overflow:auto}.diva-page-view-choice{border:2px solid #0000;flex-direction:column;gap:4px;display:flex}.diva-page-view-choice:hover{background-color:var(--diva-dark-bg)}.diva-page-view-choice.is-active{border-color:var(--diva-accent-light);background-color:var(--diva-dark-bg)}.diva-page-view-choice-thumb--protected{background:var(--diva-dark-bg);min-height:72px}.diva-page-view-choice-label{font-size:var(--diva-font-xs);color:var(--diva-text-muted);text-overflow:ellipsis;white-space:nowrap;line-height:1.2;overflow:hidden}.diva-filter-group{border-bottom:1px solid var(--diva-border);margin-bottom:12px;padding-bottom:12px}.diva-filter-title-button{text-align:left;cursor:pointer;width:100%;font-size:var(--diva-font-sm);text-transform:uppercase;letter-spacing:.08em;color:var(--diva-text-muted);background-color:#0000;border:none;align-items:center;gap:8px;margin-bottom:8px;padding:0;font-weight:600;display:flex}.diva-filter-title-button.is-collapsed{margin-bottom:0}.diva-filter-title-icon{border-top:4px solid #0000;border-bottom:4px solid #0000;border-left:6px solid var(--diva-text-muted);width:0;height:0;transition:transform .15s;display:inline-block}.diva-filter-title-icon.is-expanded{transform:rotate(90deg)}.diva-filter-row{flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle{font-size:var(--diva-font-md);align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle.is-inline{margin-bottom:0}.diva-filter-range-group{flex-direction:column;gap:6px;margin-bottom:10px;display:flex}.diva-filter-range-header{justify-content:space-between;align-items:center;gap:8px;display:flex}.diva-filter-range-header-right{align-items:center;gap:8px;display:flex}.diva-filter-range-input{width:100%}.diva-filter-value{font-size:var(--diva-font-sm);color:var(--diva-text-muted);text-align:right;width:40px}.diva-filter-reset{font-size:var(--diva-font-xs);background-color:var(--diva-surface);border:1px solid var(--diva-border);cursor:pointer;color:var(--diva-text-muted);border-radius:0;padding:2px 6px}.diva-filter-reset:hover{background-color:var(--diva-border)}.diva-filter-json{width:100%;min-height:120px;font-size:var(--diva-font-sm);border:1px solid var(--diva-border);background-color:var(--diva-white);resize:vertical;border-radius:0;padding:6px 8px;font-family:Menlo,Monaco,Consolas,Liberation Mono,monospace}.diva-filter-json-error{font-size:var(--diva-font-sm);color:var(--diva-danger);margin-top:4px}.diva-filter-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted)}.diva-filter-select{border:1px solid var(--diva-border);background-color:var(--diva-white);font-size:var(--diva-font-sm);border-radius:0;padding:4px 6px}.diva-filter-color-input{border:1px solid var(--diva-border);background-color:var(--diva-white);border-radius:0;width:42px;height:28px;padding:0}.diva-auth-overlay{z-index:10000;background:#0000008c;place-items:center;display:grid;position:fixed;inset:0}.diva-auth-dialog{box-sizing:border-box;border:1px solid var(--diva-border,#aaa);background:var(--diva-background-color,#fff);width:min(30rem,100vw - 2rem);color:var(--diva-text-primary,#222);border-radius:0;padding:1.25rem}.diva-auth-dialog button{min-height:2.25rem;color:inherit;cursor:pointer;background:0 0;border:1px solid;border-radius:0;padding:.35rem .8rem}.diva-auth-dialog button:focus-visible{outline:2px solid var(--diva-accent,#1769aa);outline-offset:2px}.diva-collection-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;height:100%;min-height:0;display:flex;overflow:hidden}.diva-collection-header{background-color:var(--diva-surface);border-bottom:1px solid var(--diva-border);border-radius:0;padding:12px}.diva-collection-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:4px;font-weight:600}.diva-collection-summary{font-size:var(--diva-font-md);color:var(--diva-text-muted);line-height:1.4}.diva-collection-tree-item{padding-left:12px}.diva-collection-node-button{align-items:center;gap:6px;width:100%;padding:6px 8px;display:flex}.diva-collection-expand-icon{flex-shrink:0;justify-content:center;align-items:center;width:16px;height:16px;display:flex}.diva-manifest-tree-item{padding:6px 8px 6px 30px}.diva-manifest-tree-item.is-active{background-color:var(--diva-border);font-weight:600}.diva-sidebar-pane.is-scroll{overflow-y:auto}@media (width<=720px){.diva-collection-panel{width:100%;height:auto}}";
+  var diva_default = ":root{--diva-accent:#5a6bff;--diva-accent-light:#9aa4ff;--diva-annotation-fill:#00bfff1f;--diva-annotation-fill-hover:#3030307a;--diva-annotation-stroke:#00bfff;--diva-annotation-stroke-hover:#d83a3a;--diva-annotation-stroke-width:2;--diva-background-color:#fff;--diva-border:#d9d4ce;--diva-danger:#d32f2f;--diva-dark-bg:#1c1d22;--diva-dark-border:#2c2d33;--diva-overlay-bg:#10111499;--diva-page-bg:#f7f5f1;--diva-shadow-dark:#00000026;--diva-shadow-focus:#9aa4ff59;--diva-shadow-modal:#00000040;--diva-surface:#e6e1dc;--diva-text-muted:#5c5a55;--diva-text-muted-on-dark:#ffffffb3;--diva-text-primary:#1b1b1b;--diva-toolbar-button-icon:#2c2d33;--diva-white:#fff;--diva-font-lg:16px;--diva-font-md:13px;--diva-font-sm:11px;--diva-font-xs:10px;--diva-font-xl:20px}.diva-app,.diva-app *{box-sizing:border-box}.diva-list-reset{margin:0;padding:0;list-style:none}.diva-ui-button{text-align:left;cursor:pointer;color:var(--diva-text-primary);font-size:var(--diva-font-lg);background-color:#0000;border:none;padding:0}.diva-ui-button:hover{background-color:var(--diva-surface)}.diva-ui-card{cursor:pointer;border-radius:0;width:100%;padding:6px}.diva-ui-card--dark{background-color:var(--diva-dark-bg)}.diva-thumbs-item:focus-visible,.diva-page-view-choice:focus-visible,.diva-canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-annotation-overlay{pointer-events:none;width:100%;height:100%;position:relative}.diva-annotation-overlay.is-hidden{visibility:hidden!important}.diva-annotation-overlay svg{width:100%;height:100%;overflow:visible}.diva-annotation-overlay g{pointer-events:all;cursor:help}.diva-annotation-tooltip{z-index:101;color:#fff;width:max-content;max-width:min(36rem,100vw - 16px);font-size:calc(var(--diva-font-sm) * 1.5);white-space:pre-line;overflow-wrap:anywhere;pointer-events:none;unicode-bidi:plaintext;background:#1c1d22f0;border:1px solid #ffffff2e;padding:9px 12px;line-height:1.35;position:absolute;transform:translate(10px,calc(-100% - 10px));box-shadow:0 4px 10px #00000047}.diva-annotation-panel{z-index:1000;color:#fff;background:#1c1d22f7;border:1px solid #fff3;width:min(24rem,100% - 28px);max-height:min(50%,24rem);padding:12px;position:absolute;bottom:14px;left:14px;overflow:auto;box-shadow:0 8px 20px #00000059}.osd-container{position:relative}.diva-annotation-panel-close{color:#fff;cursor:pointer;background-color:#000;border:1px solid #fff;border-radius:0;justify-content:center;align-items:center;height:30px;margin:0;padding:6px;display:inline-flex;position:absolute;top:12px;right:12px;width:30px!important}.diva-annotation-panel-close svg{fill:currentColor;flex:none;width:16px;height:16px}.diva-annotation-panel-close:hover,.diva-annotation-panel-close:focus-visible{background-color:#222}.diva-annotation-panel-content{padding-top:36px}.diva-annotation-panel-preview-controls{position:absolute;top:12px;right:50px}.diva-annotation-panel-content a{color:#9aa4ff}.diva-annotation-panel-content img{max-width:100%;height:auto}.diva-annotation-panel-rotate{color:#fff;cursor:pointer;background-color:#000;border:1px solid #fff;border-radius:0;justify-content:center;align-items:center;height:30px;padding:6px;font-size:18px;line-height:1;display:inline-flex;width:30px!important;margin:0!important}.diva-annotation-panel-rotate:hover,.diva-annotation-panel-rotate:focus-visible{background-color:#222}.diva-annotation-panel-image-link{color:#9aa4ff;font-size:var(--diva-font-sm);overflow-wrap:anywhere;margin:0 0 10px;line-height:1.3;display:block}.diva-annotation-rect,.diva-annotation-svg-shape{fill:var(--diva-annotation-fill,#00bfff1f);fill-opacity:1;stroke:var(--diva-annotation-stroke,#00bfff);stroke-width:var(--diva-annotation-stroke-width,2);vector-effect:non-scaling-stroke;transition:fill .12s ease-out,stroke .12s ease-out}.diva-annotation-overlay g[data-annotation-id]:hover .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id]:hover .diva-annotation-svg-shape,.diva-annotation-overlay g[data-annotation-id]:focus .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id]:focus .diva-annotation-svg-shape,.diva-annotation-overlay g[data-annotation-id].is-selected .diva-annotation-rect,.diva-annotation-overlay g[data-annotation-id].is-selected .diva-annotation-svg-shape{fill:var(--diva-annotation-fill-hover,#3030307a);stroke:var(--diva-annotation-stroke-hover,#d83a3a)}.diva-thumbs-image,.diva-page-view-choice-thumb{border-radius:0;width:100%;height:auto;display:block}.diva-metadata-panel,.diva-contents-panel{height:100%;padding:12px;overflow:auto}.diva-app{color-scheme:light;flex-direction:column;flex:1;height:100%;min-height:0;padding:12px 24px;display:flex}.diva-app.is-fullscreen{height:100vh;min-height:100vh;padding:0}.diva-app-header{font-size:var(--diva-font-lg);align-items:center;gap:12px;margin-bottom:8px;font-weight:600;display:flex}.diva-app-title{font-size:var(--diva-font-xl);text-align:left;color:var(--diva-text-primary);margin-bottom:6px;font-weight:600}.diva-app-title.is-fullscreen{color:var(--diva-white)}.diva-app-body{flex:1;align-items:stretch;gap:0;height:100%;min-height:0;display:flex;position:relative}.diva-canvas-column{flex-direction:column;flex:1;gap:24px;min-width:0;min-height:0;display:flex}.diva-canvas-column.is-fullscreen{height:100%}.diva-canvas-wrapper{flex:1;min-height:0;position:relative}.diva-canvas{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);border-radius:0;width:100%;height:100%;overflow:hidden}.diva-canvas.is-fullscreen{flex:1}.diva-metadata-body{flex-direction:column;gap:10px;display:flex}.diva-metadata-item{flex-direction:column;gap:0;display:flex}.diva-metadata-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);letter-spacing:.05em;font-weight:600;line-height:1.3}.diva-metadata-value{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px;line-height:1.3}.diva-metadata-value>:first-child{margin-top:0}.diva-metadata-value>:last-child{margin-bottom:0}.diva-contents-empty{font-size:var(--diva-font-lg);color:var(--diva-text-muted);padding-left:12px}.diva-sidebar-resizer,.diva-collection-resizer{width:12px;font-size:var(--diva-font-xl);color:var(--diva-white);background-color:var(--diva-text-muted);cursor:col-resize;user-select:none;touch-action:none;flex:0 0 12px;justify-content:center;align-self:stretch;align-items:center;line-height:1;display:flex}.diva-sidebar-resizer:hover,.diva-sidebar-resizer:active,.diva-collection-resizer:hover,.diva-collection-resizer:active{cursor:col-resize}.diva-sidebar-resizer.is-hidden,.diva-collection-resizer.is-hidden{display:none}.diva-sidebar-panel.is-hidden,.diva-collection-panel.is-hidden{opacity:0;pointer-events:none;border-width:0;padding:0;overflow:hidden}.diva-required-statement-dock{justify-content:flex-end;width:100%;margin-top:12px;padding-right:8px;display:flex}.diva-required-statement{font-size:var(--diva-font-md);color:var(--diva-text-muted);text-align:right;min-width:250px;max-width:20vw;line-height:1.4}.diva-scrollbar-track{background:var(--diva-surface);border:1px solid var(--diva-border);z-index:100;border-radius:0;width:12px;position:absolute;top:4px;bottom:4px;right:4px}.diva-scrollbar-thumb{background:var(--diva-text-muted);cursor:pointer;border-radius:0;min-height:30px;position:absolute;left:1px;right:1px}.diva-scrollbar-thumb:hover{background:var(--diva-text-primary)}.diva-scrollbar-thumb:active{background:var(--diva-dark-border)}.diva-throbber-overlay{pointer-events:none;justify-content:center;align-items:center;display:flex;position:absolute;inset:0}.diva-viewer-zoom-indicator{z-index:30;pointer-events:none;font-size:var(--diva-font-sm);color:var(--diva-white);background-color:#0000008c;border-radius:0;padding:4px 8px;font-weight:600;position:absolute;bottom:12px;left:12px}.diva-throbber{background-color:var(--diva-white);width:64px;height:64px;box-shadow:0 8px 16px var(--diva-shadow-dark);border-radius:0;flex-wrap:wrap;padding:8px;display:flex}.diva-throbber-cube{background-color:var(--diva-accent);width:16px;height:16px;animation-name:diva-cube-grid;animation-duration:1.3s;animation-timing-function:ease-in-out;animation-iteration-count:infinite}@keyframes diva-cube-grid{0%{transform:scale(1)}35%{transform:scale(0)}70%{transform:scale(1)}to{transform:scale(1)}}@media (width<=720px){.diva-app{padding:12px}.diva-app-body{flex-direction:column;gap:12px}.diva-sidebar-resizer,.diva-collection-resizer{display:none}}.diva-image-unavailable{background:color-mix(in srgb, var(--diva-background-color,#fff) 92%, transparent);box-sizing:border-box;text-align:center;border:1px solid #999;flex-direction:column;justify-content:center;align-items:center;padding:1rem;display:flex}.diva-image-unavailable button{cursor:pointer}.diva-sidebar-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;flex:none;width:320px;height:100%;min-height:0;display:flex;overflow:hidden}.diva-sidebar-tabs{border:1px solid var(--diva-surface);background-color:var(--diva-surface);border-radius:0;display:flex}.diva-sidebar-tab-button{font-size:var(--diva-font-md);text-transform:uppercase;cursor:pointer;color:var(--diva-text-muted);background-color:#0000;border:none;flex:1;padding:10px 12px}.diva-sidebar-tab-button.is-active{background-color:var(--diva-white);font-weight:600}.diva-sidebar-content{background-color:var(--diva-page-bg);flex-direction:column;flex:1;min-height:0;display:flex;position:relative;overflow:hidden}.diva-sidebar-pane{flex:1;width:100%;min-height:0}.diva-sidebar-pane.is-hidden{display:none}.diva-thumbs{scroll-behavior:smooth;background-color:var(--diva-dark-bg);flex:1;grid-template-columns:repeat(3,minmax(0,1fr));align-content:start;gap:10px;width:100%;height:100%;min-height:0;padding:12px;display:grid;overflow-y:auto}.diva-thumbs-item{border:1px solid var(--diva-dark-border);text-align:left;flex-direction:column;justify-content:flex-start;align-items:stretch;max-width:none;display:flex}.diva-thumbs-item.is-active{border-color:var(--diva-accent-light);box-shadow:0 0 0 var(--diva-shadow-focus);background-color:var(--diva-dark-bg);outline:2px solid var(--diva-accent-light);outline-offset:2px}.diva-thumbs-lazy-image{background:var(--diva-dark-bg);width:100%;min-height:96px;display:block}.diva-thumbs-image--protected,.diva-thumbs-image--unavailable{background:var(--diva-dark-bg);min-height:96px}.diva-thumbs-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted-on-dark);margin-top:6px;line-height:1.3}.diva-thumbs-label.is-active{color:var(--diva-white)}.diva-contents-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:10px;font-weight:600}.diva-contents-view-tabs{gap:8px;margin-bottom:12px;display:flex}.diva-contents-view-button{background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);color:var(--diva-text-muted);cursor:pointer;border-radius:0;padding:4px 10px}.diva-contents-view-button.is-active{background-color:var(--diva-white);border-color:var(--diva-accent);color:var(--diva-text-primary)}.diva-contents-list-nested{border-left:1px solid var(--diva-border);margin-top:6px;margin-left:6px;padding-left:13px}.diva-contents-item{margin-bottom:6px}.diva-contents-heading{align-items:baseline;display:flex}.diva-contents-disclosure{color:var(--diva-text-muted);cursor:pointer;text-align:center;flex:0 0 1.25rem}.diva-contents-disclosure:hover{color:var(--diva-accent)}.diva-contents-meta{border:1px solid var(--diva-dark-border);flex-direction:column;gap:10px;margin-top:6px;padding:8px;display:flex}.diva-contents-meta dl>div+div{border-top:1px solid var(--diva-dark-border);margin-top:.75rem;padding-top:.75rem}.diva-contents-meta dt{font-weight:600}.diva-contents-meta dd{margin:0 0 .5rem 1rem}.diva-contents-meta dd:last-child{margin-bottom:0}.diva-contents-button:hover{color:var(--diva-accent)}.diva-contents-button.is-current{font-weight:600}@media (width<=720px){.diva-sidebar-panel{height:auto;width:100%!important}.diva-sidebar-panel.is-overlay{z-index:100;width:100%;height:100%;box-shadow:0 12px 24px var(--diva-shadow-dark);border-radius:0;position:absolute;inset:0}.diva-sidebar-panel.is-mobile-hidden{display:none}.diva-thumbs{height:auto;overflow:auto hidden}.diva-thumbs-item{min-width:120px}}.diva-canvas-toolbar-stack{flex-direction:column;gap:4px;width:100%;min-width:0;display:flex}.diva-canvas-toolbar{align-items:center;width:100%;margin-bottom:0;display:flex}.diva-canvas-toolbar-section{flex:none;align-items:center;gap:5px;min-width:0;display:flex}.diva-canvas-toolbar-section.is-right{flex:none;margin-left:auto}.diva-canvas-toolbar-end{align-items:center;gap:8px;min-width:0;margin-left:auto;display:flex}.diva-canvas-toolbar-end .diva-canvas-toolbar-section.is-right{margin-left:0}.diva-canvas-toolbar-item{flex:none;justify-content:center;align-items:center;width:34px;height:34px;display:flex;position:relative}.diva-canvas-toolbar-button{width:30px;height:30px;color:var(--diva-toolbar-button-icon);box-shadow:none;cursor:pointer;background-color:#e2e2e2f0;border:1px solid #2c2d3373;border-radius:0;justify-content:center;align-items:center;padding:6px;display:flex}.diva-canvas-toolbar-button svg{flex:none;width:16px;height:16px}.diva-canvas-toolbar-button:focus-visible{outline:2px solid var(--diva-accent);outline-offset:2px}.diva-canvas-toolbar-button:hover{border-color:var(--diva-toolbar-button-icon);background-color:#d6d6d6fa}.diva-canvas-toolbar-button.is-fullscreen{color:var(--diva-white);background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-button.is-fullscreen:hover{border-color:var(--diva-white);background-color:#606874b8}.diva-canvas-toolbar-button.is-disabled{opacity:.4;cursor:not-allowed}.diva-canvas-toolbar-button.is-disabled:hover{background-color:#e2e2e2f0;border-color:#2c2d3373}.diva-canvas-toolbar-button.is-fullscreen.is-disabled:hover{background-color:#52586294;border-color:#ffffff85}.diva-canvas-toolbar-item:after{z-index:80;max-width:160px;color:var(--diva-white);content:attr(data-tooltip);font-size:var(--diva-font-xs);letter-spacing:.02em;opacity:0;pointer-events:none;text-align:center;visibility:hidden;white-space:normal;word-break:normal;background-color:#1c1d22f2;border:1px solid #ffffff2e;border-radius:0;width:max-content;padding:5px 7px;font-weight:600;line-height:1.2;transition:opacity .12s,transform .12s;position:absolute;top:calc(100% + 7px);left:50%;transform:translate(-50%,-3px);box-shadow:0 4px 10px #0003}.diva-canvas-toolbar-item:hover:after,.diva-canvas-toolbar-item:has(.diva-canvas-toolbar-button:focus-visible):after{opacity:1;visibility:visible;transform:translate(-50%)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:after{left:auto;right:0;transform:translateY(-3px)}.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:hover:after,.diva-canvas-toolbar-section.is-right .diva-canvas-toolbar-item:last-child:has(.diva-canvas-toolbar-button:focus-visible):after{transform:translate(0)}.diva-canvas-label{font-size:var(--diva-font-lg);color:var(--diva-text-muted);text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:100%}.diva-canvas-toolbar-end .diva-canvas-label{overflow-wrap:normal;text-align:right;white-space:nowrap;word-break:normal;flex:auto;width:auto;min-width:0;max-width:min(42vw,42rem);overflow:hidden}.diva-canvas-label.is-fullscreen{color:var(--diva-white)}.diva-status{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:0}.diva-status.is-error{color:var(--diva-danger)}@media (width<=720px){.diva-canvas-toolbar{flex-wrap:wrap;gap:5px}.diva-canvas-toolbar-end{justify-content:flex-end;width:100%;margin-left:0}.diva-canvas-toolbar-item{width:32px;height:32px}.diva-canvas-toolbar-button{width:28px;height:28px;padding:6px}.diva-canvas-toolbar-button svg{width:15px;height:15px}.diva-canvas-label,.diva-status{display:none}}.diva-modal-overlay{background-color:var(--diva-overlay-bg);z-index:100;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.diva-viewer-status-overlay{background-color:var(--diva-overlay-bg);z-index:40;justify-content:center;align-items:center;padding:24px;display:flex;position:absolute;inset:0}.diva-modal-overlay.is-fullscreen{padding:0}.diva-modal{background-color:var(--diva-page-bg);color:var(--diva-text-primary);width:min(1440px,96vw);max-height:90vh;box-shadow:0 20px 40px var(--diva-shadow-modal);border-radius:0;flex-direction:column;display:flex}.diva-modal.is-narrow{width:min(960px,94vw)}.diva-modal.is-page-view{height:80vh;max-height:80vh}.diva-modal.is-fullscreen{border-radius:0;width:100vw;height:100vh;max-height:100vh}.diva-modal-header{justify-content:space-between;align-items:center;padding:16px 20px 0;display:flex}.diva-modal-actions{gap:8px;display:flex}.diva-modal-close-action .diva-canvas-toolbar-button{color:var(--diva-danger);box-shadow:none;-webkit-backdrop-filter:none;background-color:#0000;border:none;width:auto;height:auto;padding:2px}.diva-modal-close-action .diva-canvas-toolbar-button:hover{background-color:#d32f2f1f;border-color:#0000}.diva-modal-close-action .diva-canvas-toolbar-item{width:32px}.diva-modal-title-stack{flex-direction:column;gap:4px;display:flex}.diva-modal-title{font-size:var(--diva-font-lg);font-weight:600}.diva-modal-subtitle{font-size:var(--diva-font-lg);color:var(--diva-text-primary)}.diva-modal-subtitle.is-muted{font-size:var(--diva-font-md)}.diva-modal-body{flex:1;grid-template-columns:minmax(0,1fr) 240px;gap:16px;min-height:0;padding:16px 20px 20px;display:grid}.diva-modal-body.is-no-gap{gap:0}.diva-modal-body.is-two-column{grid-template-columns:minmax(0,1fr) 200px;align-items:start}.diva-modal-body.is-no-sidebar{grid-template-columns:minmax(0,1fr)}.diva-modal-body.is-with-choices{grid-template-columns:120px minmax(0,1fr) 240px}.diva-modal-body.is-with-choices-no-sidebar{grid-template-columns:120px minmax(0,1fr)}.diva-modal-viewer{background-color:var(--diva-dark-bg);border:1px solid var(--diva-dark-border);height:100%;overflow:hidden}.diva-modal-canvas{width:100%;height:100%;display:block}.diva-modal-sidebar{background-color:var(--diva-white);border-top:1px solid var(--diva-border);border-right:1px solid var(--diva-border);border-bottom:1px solid var(--diva-border);border-radius:0;padding:16px;overflow:auto}.diva-filter-access-warning{color:var(--diva-danger);background-color:var(--diva-surface);border:1px solid var(--diva-border);font-size:var(--diva-font-sm);margin:0 0 12px;padding:8px;line-height:1.4}.diva-manifest-info-logo-wrap{text-align:center;flex-direction:column;align-items:center;gap:8px;display:flex}.diva-manifest-info-logo{width:100%;max-width:180px;height:auto}.diva-page-view-choices{background-color:var(--diva-dark-bg);border-radius:0;flex-direction:column;gap:8px;padding:8px;display:flex;overflow:auto}.diva-page-view-choice{border:2px solid #0000;flex-direction:column;gap:4px;display:flex}.diva-page-view-choice:hover{background-color:var(--diva-dark-bg)}.diva-page-view-choice.is-active{border-color:var(--diva-accent-light);background-color:var(--diva-dark-bg)}.diva-page-view-choice-thumb--protected{background:var(--diva-dark-bg);min-height:72px}.diva-page-view-choice-label{font-size:var(--diva-font-xs);color:var(--diva-text-muted);text-overflow:ellipsis;white-space:nowrap;line-height:1.2;overflow:hidden}.diva-filter-group{border-bottom:1px solid var(--diva-border);margin-bottom:12px;padding-bottom:12px}.diva-filter-title-button{text-align:left;cursor:pointer;width:100%;font-size:var(--diva-font-sm);text-transform:uppercase;letter-spacing:.08em;color:var(--diva-text-muted);background-color:#0000;border:none;align-items:center;gap:8px;margin-bottom:8px;padding:0;font-weight:600;display:flex}.diva-filter-title-button.is-collapsed{margin-bottom:0}.diva-filter-title-icon{border-top:4px solid #0000;border-bottom:4px solid #0000;border-left:6px solid var(--diva-text-muted);width:0;height:0;transition:transform .15s;display:inline-block}.diva-filter-title-icon.is-expanded{transform:rotate(90deg)}.diva-filter-row{flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle{font-size:var(--diva-font-md);align-items:center;gap:8px;margin-bottom:8px;display:flex}.diva-filter-toggle.is-inline{margin-bottom:0}.diva-filter-range-group{flex-direction:column;gap:6px;margin-bottom:10px;display:flex}.diva-filter-range-header{justify-content:space-between;align-items:center;gap:8px;display:flex}.diva-filter-range-header-right{align-items:center;gap:8px;display:flex}.diva-filter-range-input{width:100%}.diva-filter-value{font-size:var(--diva-font-sm);color:var(--diva-text-muted);text-align:right;width:40px}.diva-filter-reset{font-size:var(--diva-font-xs);background-color:var(--diva-surface);border:1px solid var(--diva-border);cursor:pointer;color:var(--diva-text-muted);border-radius:0;padding:2px 6px}.diva-filter-reset:hover{background-color:var(--diva-border)}.diva-filter-json{width:100%;min-height:120px;font-size:var(--diva-font-sm);border:1px solid var(--diva-border);background-color:var(--diva-white);resize:vertical;border-radius:0;padding:6px 8px;font-family:Menlo,Monaco,Consolas,Liberation Mono,monospace}.diva-filter-json-error{font-size:var(--diva-font-sm);color:var(--diva-danger);margin-top:4px}.diva-filter-label{font-size:var(--diva-font-sm);color:var(--diva-text-muted)}.diva-filter-select{border:1px solid var(--diva-border);background-color:var(--diva-white);font-size:var(--diva-font-sm);border-radius:0;padding:4px 6px}.diva-filter-color-input{border:1px solid var(--diva-border);background-color:var(--diva-white);border-radius:0;width:42px;height:28px;padding:0}.diva-auth-overlay{z-index:10000;background:#0000008c;place-items:center;display:grid;position:fixed;inset:0}.diva-auth-dialog{box-sizing:border-box;border:1px solid var(--diva-border,#aaa);background:var(--diva-background-color,#fff);width:min(30rem,100vw - 2rem);color:var(--diva-text-primary,#222);border-radius:0;padding:1.25rem}.diva-auth-dialog button{min-height:2.25rem;color:inherit;cursor:pointer;background:0 0;border:1px solid;border-radius:0;padding:.35rem .8rem}.diva-auth-dialog button:focus-visible{outline:2px solid var(--diva-accent,#1769aa);outline-offset:2px}.diva-collection-panel{border:1px solid var(--diva-dark-border);background-color:var(--diva-page-bg);border-radius:0;flex-direction:column;height:100%;min-height:0;display:flex;overflow:hidden}.diva-collection-header{background-color:var(--diva-surface);border-bottom:1px solid var(--diva-border);border-radius:0;padding:12px}.diva-collection-title{font-size:var(--diva-font-lg);color:var(--diva-text-muted);margin-bottom:4px;font-weight:600}.diva-collection-summary{font-size:var(--diva-font-md);color:var(--diva-text-muted);line-height:1.4}.diva-collection-tree-item{padding-left:12px}.diva-collection-node-button{align-items:center;gap:6px;width:100%;padding:6px 8px;display:flex}.diva-collection-expand-icon{flex-shrink:0;justify-content:center;align-items:center;width:16px;height:16px;display:flex}.diva-manifest-tree-item{padding:6px 8px 6px 30px}.diva-manifest-tree-item.is-active{background-color:var(--diva-border);font-weight:600}.diva-sidebar-pane.is-scroll{overflow-y:auto}@media (width<=720px){.diva-collection-panel{width:100%;height:auto}}";
 
   // cache/elm-esm.js
   function F(arity, fun, wrapper) {
@@ -11575,6 +11947,12 @@
       return _Utils_cmp(number, low) < 0 ? low : _Utils_cmp(number, high) > 0 ? high : number;
     }
   );
+  var $author$project$RangeIndex$Indexes = function(a) {
+    return { $: "Indexes", a };
+  };
+  var $author$project$RangeIndex$empty = $author$project$RangeIndex$Indexes(
+    { canvasIdsByRange: $elm$core$Dict$empty, firstPageIndexes: $elm$core$Dict$empty, labelBoundsByRange: $elm$core$Dict$empty, rangesByCanvas: $elm$core$Dict$empty, topLevelRanges: _List_Nil }
+  );
   var $elm$core$Set$empty = $elm$core$Set$Set_elm_builtin($elm$core$Dict$empty);
   var $elm$browser$Browser$Dom$getViewport = _Browser_withWindow(_Browser_getViewport);
   var $author$project$Auth$init = { activeInteractive: $elm$core$Maybe$Nothing, activePrompt: $elm$core$Maybe$Nothing, destroyed: false, familyStates: $elm$core$Dict$empty, flows: $elm$core$Dict$empty, nextOperation: 0, operations: $elm$core$Dict$empty, pending: $elm$core$Dict$empty, promptQueue: _List_Nil, sessions: $elm$core$Dict$empty, sources: $elm$core$Dict$empty };
@@ -14840,6 +15218,7 @@
     return _Utils_Tuple2(
       {
         acceptHeaders: flags.acceptHeaders,
+        annotationGeneration: 0,
         annotationLoading: $elm$core$Set$empty,
         annotationServer: flags.annotationServer,
         annotationSources: $elm$core$Dict$empty,
@@ -14875,13 +15254,14 @@
         pages: _List_Nil,
         pendingPublicResource: $elm$core$Maybe$Nothing,
         pendingThumbScroll: $elm$core$Maybe$Nothing,
-        rangeIndexMap: $elm$core$Dict$empty,
+        rangeIndexes: $author$project$RangeIndex$empty,
         resourceResponse: $author$project$Model$ResourceLoading,
         response: $author$project$Model$Loading,
         rootElementId: flags.rootElementId,
         selectedIndex: $elm$core$Maybe$Nothing,
         selectedRangeId: $elm$core$Maybe$Nothing,
         shiftByOne: false,
+        showLogoutButton: flags.showLogoutButton,
         showTitle: flags.showTitle,
         sidebarDrag: $elm$core$Maybe$Nothing,
         sidebarPanel,
@@ -14979,6 +15359,9 @@
   };
   var $author$project$Msg$ViewerLoadingChanged = function(a) {
     return { $: "ViewerLoadingChanged", a };
+  };
+  var $author$project$Msg$ViewerRequestedAnnotationPages = function(a) {
+    return { $: "ViewerRequestedAnnotationPages", a };
   };
   var $author$project$Main$authDestroyed = _Platform_incomingPort(
     "authDestroyed",
@@ -15453,6 +15836,10 @@
       A2($elm$json$Json$Decode$field, "url", $elm$json$Json$Decode$string)
     )
   );
+  var $author$project$Main$viewerAnnotationPagesRequested = _Platform_incomingPort(
+    "viewerAnnotationPagesRequested",
+    $elm$json$Json$Decode$list($elm$json$Json$Decode$int)
+  );
   var $author$project$Main$viewerLoadingChanged = _Platform_incomingPort("viewerLoadingChanged", $elm$json$Json$Decode$bool);
   var $author$project$Main$viewerPageLoaded = _Platform_incomingPort("viewerPageLoaded", $elm$json$Json$Decode$int);
   var $author$project$Main$zoomChanged = _Platform_incomingPort("zoomChanged", $elm$json$Json$Decode$float);
@@ -15524,6 +15911,7 @@
           $author$project$Main$zoomChanged($author$project$Msg$UserChangedZoomLevel),
           $author$project$Main$viewerLoadingChanged($author$project$Msg$ViewerLoadingChanged),
           $author$project$Main$viewerPageLoaded($author$project$Msg$ViewerLoadedPage),
+          $author$project$Main$viewerAnnotationPagesRequested($author$project$Msg$ViewerRequestedAnnotationPages),
           $elm$browser$Browser$Events$onResize(
             F2(
               function(width, _v1) {
@@ -15632,20 +16020,23 @@
         }
     }
   );
-  var $author$project$Model$primaryImage = function(page) {
+  var $author$project$Model$primaryImageFromList = function(images) {
     var _v0 = A2(
       $author$project$Utilities$find,
       function($) {
         return $.isPrimary;
       },
-      page.images
+      images
     );
     if (_v0.$ === "Just") {
       var image = _v0.a;
       return $elm$core$Maybe$Just(image);
     } else {
-      return $elm$core$List$head(page.images);
+      return $elm$core$List$head(images);
     }
+  };
+  var $author$project$Model$primaryImage = function(page) {
+    return $author$project$Model$primaryImageFromList(page.images);
   };
   var $author$project$Auth$requiresAuthorization = function(sourceAuth) {
     if (sourceAuth.$ === "Discovered") {
@@ -17222,6 +17613,31 @@
                           $elm$json$Json$Encode$bool($2.isStatic)
                         ),
                         _Utils_Tuple2(
+                          "preview",
+                          (function($3) {
+                            return $elm$json$Json$Encode$object(
+                              _List_fromArray(
+                                [
+                                  _Utils_Tuple2(
+                                    "crossOrigin",
+                                    (function($4) {
+                                      return A3($elm$core$Maybe$destruct, $elm$json$Json$Encode$null, $elm$json$Json$Encode$string, $4);
+                                    })($3.crossOrigin)
+                                  ),
+                                  _Utils_Tuple2(
+                                    "fallbackUrl",
+                                    $elm$json$Json$Encode$string($3.fallbackUrl)
+                                  ),
+                                  _Utils_Tuple2(
+                                    "url",
+                                    $elm$json$Json$Encode$string($3.url)
+                                  )
+                                ]
+                              )
+                            );
+                          })($2.preview)
+                        ),
+                        _Utils_Tuple2(
                           "sourceId",
                           $elm$json$Json$Encode$string($2.sourceId)
                         ),
@@ -17981,148 +18397,6 @@
       );
     }
   };
-  var $elm$core$String$cons = _String_cons;
-  var $elm$core$String$fromChar = function(_char) {
-    return A2($elm$core$String$cons, _char, "");
-  };
-  var $author$project$Annotation$stripTagsHelp = F3(
-    function(inTag, remaining, result) {
-      stripTagsHelp:
-        while (true) {
-          var _v0 = $elm$core$String$uncons(remaining);
-          if (_v0.$ === "Just") {
-            var _v1 = _v0.a;
-            var character = _v1.a;
-            var rest = _v1.b;
-            if (_Utils_eq(
-              character,
-              _Utils_chr("<")
-            )) {
-              var $temp$inTag = true, $temp$remaining = rest, $temp$result = result;
-              inTag = $temp$inTag;
-              remaining = $temp$remaining;
-              result = $temp$result;
-              continue stripTagsHelp;
-            } else {
-              if (_Utils_eq(
-                character,
-                _Utils_chr(">")
-              )) {
-                var $temp$inTag = false, $temp$remaining = rest, $temp$result = result;
-                inTag = $temp$inTag;
-                remaining = $temp$remaining;
-                result = $temp$result;
-                continue stripTagsHelp;
-              } else {
-                if (inTag) {
-                  var $temp$inTag = true, $temp$remaining = rest, $temp$result = result;
-                  inTag = $temp$inTag;
-                  remaining = $temp$remaining;
-                  result = $temp$result;
-                  continue stripTagsHelp;
-                } else {
-                  var $temp$inTag = false, $temp$remaining = rest, $temp$result = _Utils_ap(
-                    result,
-                    $elm$core$String$fromChar(character)
-                  );
-                  inTag = $temp$inTag;
-                  remaining = $temp$remaining;
-                  result = $temp$result;
-                  continue stripTagsHelp;
-                }
-              }
-            }
-          } else {
-            return result;
-          }
-        }
-    }
-  );
-  var $author$project$Annotation$stripTags = function(value) {
-    return A3($author$project$Annotation$stripTagsHelp, false, value, "");
-  };
-  var $author$project$Annotation$encode = F2(
-    function(imageService, annotation) {
-      var shapeValue = (function() {
-        var _v0 = annotation.target.selector;
-        if (_v0.$ === "Rectangle") {
-          var x = _v0.a;
-          var y = _v0.b;
-          var width = _v0.c;
-          var height = _v0.d;
-          return $elm$json$Json$Encode$object(
-            _List_fromArray(
-              [
-                _Utils_Tuple2(
-                  "kind",
-                  $elm$json$Json$Encode$string("rect")
-                ),
-                _Utils_Tuple2(
-                  "x",
-                  $elm$json$Json$Encode$float(x)
-                ),
-                _Utils_Tuple2(
-                  "y",
-                  $elm$json$Json$Encode$float(y)
-                ),
-                _Utils_Tuple2(
-                  "width",
-                  $elm$json$Json$Encode$float(width)
-                ),
-                _Utils_Tuple2(
-                  "height",
-                  $elm$json$Json$Encode$float(height)
-                )
-              ]
-            )
-          );
-        } else {
-          var value = _v0.a;
-          return $elm$json$Json$Encode$object(
-            _List_fromArray(
-              [
-                _Utils_Tuple2(
-                  "kind",
-                  $elm$json$Json$Encode$string("svg")
-                ),
-                _Utils_Tuple2(
-                  "value",
-                  $elm$json$Json$Encode$string(value)
-                )
-              ]
-            )
-          );
-        }
-      })();
-      return $elm$json$Json$Encode$object(
-        _List_fromArray(
-          [
-            _Utils_Tuple2(
-              "id",
-              $elm$json$Json$Encode$string(annotation.id)
-            ),
-            _Utils_Tuple2("shape", shapeValue),
-            _Utils_Tuple2(
-              "text",
-              $elm$json$Json$Encode$string(
-                $author$project$Annotation$stripTags(annotation.body.value)
-              )
-            ),
-            _Utils_Tuple2(
-              "html",
-              $elm$json$Json$Encode$string(annotation.body.value)
-            ),
-            _Utils_Tuple2(
-              "imageService",
-              $elm$json$Json$Encode$string(
-                A2($elm$core$Maybe$withDefault, "", imageService)
-              )
-            )
-          ]
-        )
-      );
-    }
-  );
   var $author$project$Filters$addIf = F4(
     function(condition, key, value, acc) {
       return condition ? A2(
@@ -18434,6 +18708,227 @@
       $elm$json$Json$Encode$object(activeFields)
     );
   };
+  var $elm$core$String$cons = _String_cons;
+  var $elm$core$String$fromChar = function(_char) {
+    return A2($elm$core$String$cons, _char, "");
+  };
+  var $author$project$Annotation$stripTagsHelp = F3(
+    function(inTag, remaining, result) {
+      stripTagsHelp:
+        while (true) {
+          var _v0 = $elm$core$String$uncons(remaining);
+          if (_v0.$ === "Just") {
+            var _v1 = _v0.a;
+            var character = _v1.a;
+            var rest = _v1.b;
+            if (_Utils_eq(
+              character,
+              _Utils_chr("<")
+            )) {
+              var $temp$inTag = true, $temp$remaining = rest, $temp$result = result;
+              inTag = $temp$inTag;
+              remaining = $temp$remaining;
+              result = $temp$result;
+              continue stripTagsHelp;
+            } else {
+              if (_Utils_eq(
+                character,
+                _Utils_chr(">")
+              )) {
+                var $temp$inTag = false, $temp$remaining = rest, $temp$result = result;
+                inTag = $temp$inTag;
+                remaining = $temp$remaining;
+                result = $temp$result;
+                continue stripTagsHelp;
+              } else {
+                if (inTag) {
+                  var $temp$inTag = true, $temp$remaining = rest, $temp$result = result;
+                  inTag = $temp$inTag;
+                  remaining = $temp$remaining;
+                  result = $temp$result;
+                  continue stripTagsHelp;
+                } else {
+                  var $temp$inTag = false, $temp$remaining = rest, $temp$result = _Utils_ap(
+                    result,
+                    $elm$core$String$fromChar(character)
+                  );
+                  inTag = $temp$inTag;
+                  remaining = $temp$remaining;
+                  result = $temp$result;
+                  continue stripTagsHelp;
+                }
+              }
+            }
+          } else {
+            return result;
+          }
+        }
+    }
+  );
+  var $author$project$Annotation$stripTags = function(value) {
+    return A3($author$project$Annotation$stripTagsHelp, false, value, "");
+  };
+  var $elm$core$String$toLower = _String_toLower;
+  var $elm$core$String$trim = _String_trim;
+  var $author$project$Annotation$bodyText = function(body) {
+    var format = $elm$core$String$toLower(
+      $elm$core$String$trim(
+        A2(
+          $elm$core$Maybe$withDefault,
+          "",
+          $elm$core$List$head(
+            A2(
+              $elm$core$String$split,
+              ";",
+              A2($elm$core$Maybe$withDefault, "", body.format)
+            )
+          )
+        )
+      )
+    );
+    return format === "text/plain" ? body.value : $author$project$Annotation$stripTags(body.value);
+  };
+  var $author$project$Annotation$encodeBody = function(body) {
+    return $elm$json$Json$Encode$object(
+      A2(
+        $elm$core$List$filterMap,
+        $elm$core$Basics$identity,
+        _List_fromArray(
+          [
+            $elm$core$Maybe$Just(
+              _Utils_Tuple2(
+                "value",
+                $elm$json$Json$Encode$string(body.value)
+              )
+            ),
+            A2(
+              $elm$core$Maybe$map,
+              function(format) {
+                return _Utils_Tuple2(
+                  "format",
+                  $elm$json$Json$Encode$string(format)
+                );
+              },
+              body.format
+            ),
+            A2(
+              $elm$core$Maybe$map,
+              function(language) {
+                return _Utils_Tuple2(
+                  "language",
+                  $elm$json$Json$Encode$string(language)
+                );
+              },
+              body.language
+            )
+          ]
+        )
+      )
+    );
+  };
+  var $author$project$Annotation$encodeWithBodies = F2(
+    function(imageService, entry) {
+      var annotation = entry.annotation;
+      var shapeValue = (function() {
+        var _v0 = annotation.target.selector;
+        if (_v0.$ === "Rectangle") {
+          var x = _v0.a;
+          var y = _v0.b;
+          var width = _v0.c;
+          var height = _v0.d;
+          return $elm$json$Json$Encode$object(
+            _List_fromArray(
+              [
+                _Utils_Tuple2(
+                  "kind",
+                  $elm$json$Json$Encode$string("rect")
+                ),
+                _Utils_Tuple2(
+                  "x",
+                  $elm$json$Json$Encode$float(x)
+                ),
+                _Utils_Tuple2(
+                  "y",
+                  $elm$json$Json$Encode$float(y)
+                ),
+                _Utils_Tuple2(
+                  "width",
+                  $elm$json$Json$Encode$float(width)
+                ),
+                _Utils_Tuple2(
+                  "height",
+                  $elm$json$Json$Encode$float(height)
+                )
+              ]
+            )
+          );
+        } else {
+          var value = _v0.a;
+          return $elm$json$Json$Encode$object(
+            _List_fromArray(
+              [
+                _Utils_Tuple2(
+                  "kind",
+                  $elm$json$Json$Encode$string("svg")
+                ),
+                _Utils_Tuple2(
+                  "value",
+                  $elm$json$Json$Encode$string(value)
+                )
+              ]
+            )
+          );
+        }
+      })();
+      return $elm$json$Json$Encode$object(
+        _List_fromArray(
+          [
+            _Utils_Tuple2(
+              "id",
+              $elm$json$Json$Encode$string(annotation.id)
+            ),
+            _Utils_Tuple2("shape", shapeValue),
+            _Utils_Tuple2(
+              "text",
+              $elm$json$Json$Encode$string(
+                A2(
+                  $elm$core$String$join,
+                  "\n\n",
+                  A2($elm$core$List$map, $author$project$Annotation$bodyText, entry.bodies)
+                )
+              )
+            ),
+            _Utils_Tuple2(
+              "html",
+              $elm$json$Json$Encode$string(
+                A2(
+                  $elm$core$String$join,
+                  "\n\n",
+                  A2(
+                    $elm$core$List$map,
+                    function($) {
+                      return $.value;
+                    },
+                    entry.bodies
+                  )
+                )
+              )
+            ),
+            _Utils_Tuple2(
+              "bodies",
+              A2($elm$json$Json$Encode$list, $author$project$Annotation$encodeBody, entry.bodies)
+            ),
+            _Utils_Tuple2(
+              "imageService",
+              $elm$json$Json$Encode$string(
+                A2($elm$core$Maybe$withDefault, "", imageService)
+              )
+            )
+          ]
+        )
+      );
+    }
+  );
   var $author$project$Main$findCollectionById = F2(
     function(collectionId, collection) {
       var loop = F2(
@@ -18499,154 +18994,174 @@
   var $author$project$Model$Loaded = function(a) {
     return { $: "Loaded", a };
   };
-  var $rism_digital$elm_iiif$IIIF$Presentation$toManifest = function(_v0) {
-    var iiifManifest = _v0.b;
-    return iiifManifest;
-  };
-  var $rism_digital$elm_iiif$IIIF$Presentation$withManifest = F2(
-    function(accessor, manifest) {
-      return accessor(
-        $rism_digital$elm_iiif$IIIF$Presentation$toManifest(manifest)
-      );
-    }
-  );
-  var $rism_digital$elm_iiif$IIIF$Presentation$toCanvases = $rism_digital$elm_iiif$IIIF$Presentation$withManifest(
-    function($) {
-      return $.canvases;
-    }
-  );
-  var $author$project$Main$annotationSourcesForManifest = function(manifest) {
+  var $author$project$Main$annotationSourcesForCanvases = function(canvases) {
     return $elm$core$Dict$fromList(
       A2(
         $elm$core$List$map,
         function(canvas) {
           return _Utils_Tuple2(canvas.id, canvas.annotationSources);
         },
-        $rism_digital$elm_iiif$IIIF$Presentation$toCanvases(manifest)
+        canvases
       )
     );
   };
-  var $author$project$Main$rangeIndexMapForRange = F2(
-    function(canvasIndex, range) {
-      var _v4 = A2($author$project$Main$rangeItemsIndexMap, canvasIndex, range.items);
-      var firstIndex = _v4.a;
-      var childMap = _v4.b;
-      return A3($elm$core$Dict$insert, range.id, firstIndex, childMap);
-    }
-  );
-  var $author$project$Main$rangeItemsIndexMap = F2(
-    function(canvasIndex, items) {
+  var $author$project$RangeIndex$addCanvasMembership = F3(
+    function(canvasId, pathRev, state) {
       return A3(
-        $elm$core$List$foldl,
+        $elm$core$List$foldr,
         F2(
-          function(item, _v0) {
-            var maybeFirst = _v0.a;
-            var acc = _v0.b;
-            if (item.$ === "RangeCanvas") {
-              var canvasId = item.a;
-              var nextFirst = (function() {
-                if (maybeFirst.$ === "Just") {
-                  return maybeFirst;
-                } else {
-                  return A2($elm$core$Dict$get, canvasId, canvasIndex);
-                }
-              })();
-              return _Utils_Tuple2(nextFirst, acc);
-            } else {
-              var range = item.a;
-              var rangeMap = A2($author$project$Main$rangeIndexMapForRange, canvasIndex, range);
-              var nextFirst = (function() {
-                if (maybeFirst.$ === "Just") {
-                  return maybeFirst;
-                } else {
-                  return A2(
-                    $elm$core$Maybe$withDefault,
-                    $elm$core$Maybe$Nothing,
-                    A2($elm$core$Dict$get, range.id, rangeMap)
-                  );
-                }
-              })();
-              return _Utils_Tuple2(
-                nextFirst,
-                A2($elm$core$Dict$union, rangeMap, acc)
-              );
-            }
-          }
-        ),
-        _Utils_Tuple2($elm$core$Maybe$Nothing, $elm$core$Dict$empty),
-        items
-      );
-    }
-  );
-  var $author$project$Main$buildRangeIndexMap = F2(
-    function(canvasIndex, ranges) {
-      return A3(
-        $elm$core$List$foldl,
-        F2(
-          function(range, acc) {
-            return A2(
-              $elm$core$Dict$union,
-              A2($author$project$Main$rangeIndexMapForRange, canvasIndex, range),
-              acc
+          function(range, currentState) {
+            var seenIds = A2(
+              $elm$core$Maybe$withDefault,
+              $elm$core$Set$empty,
+              A2($elm$core$Dict$get, canvasId, currentState.rangeIdsByCanvas)
+            );
+            return A2($elm$core$Set$member, range.id, seenIds) ? currentState : _Utils_update(
+              currentState,
+              {
+                canvasIdsByRange: A3(
+                  $elm$core$Dict$update,
+                  range.id,
+                  function(maybeCanvasIds) {
+                    return $elm$core$Maybe$Just(
+                      A2(
+                        $elm$core$Set$insert,
+                        canvasId,
+                        A2($elm$core$Maybe$withDefault, $elm$core$Set$empty, maybeCanvasIds)
+                      )
+                    );
+                  },
+                  currentState.canvasIdsByRange
+                ),
+                rangeIdsByCanvas: A3(
+                  $elm$core$Dict$insert,
+                  canvasId,
+                  A2($elm$core$Set$insert, range.id, seenIds),
+                  currentState.rangeIdsByCanvas
+                ),
+                reversedRangesByCanvas: A3(
+                  $elm$core$Dict$update,
+                  canvasId,
+                  function(maybeRanges) {
+                    return $elm$core$Maybe$Just(
+                      A2(
+                        $elm$core$List$cons,
+                        range,
+                        A2($elm$core$Maybe$withDefault, _List_Nil, maybeRanges)
+                      )
+                    );
+                  },
+                  currentState.reversedRangesByCanvas
+                )
+              }
             );
           }
         ),
-        $elm$core$Dict$empty,
+        state,
+        pathRev
+      );
+    }
+  );
+  var $author$project$RangeIndex$firstJust = F2(
+    function(first, second) {
+      if (first.$ === "Just") {
+        return first;
+      } else {
+        return second;
+      }
+    }
+  );
+  var $author$project$RangeIndex$combine = F2(
+    function(earlier, later) {
+      return {
+        firstLabel: A2($author$project$RangeIndex$firstJust, earlier.firstLabel, later.firstLabel),
+        firstPageIndex: A2($author$project$RangeIndex$firstJust, earlier.firstPageIndex, later.firstPageIndex),
+        lastLabel: A2($author$project$RangeIndex$firstJust, later.lastLabel, earlier.lastLabel)
+      };
+    }
+  );
+  var $author$project$RangeIndex$emptySummary = { firstLabel: $elm$core$Maybe$Nothing, firstPageIndex: $elm$core$Maybe$Nothing, lastLabel: $elm$core$Maybe$Nothing };
+  var $author$project$RangeIndex$indexItem = F5(
+    function(canvasIndexes, canvasLabels, pathRev, item, _v1) {
+      var accumulated = _v1.a;
+      var state = _v1.b;
+      if (item.$ === "RangeCanvas") {
+        var canvasId = item.a;
+        var nextState = A3($author$project$RangeIndex$addCanvasMembership, canvasId, pathRev, state);
+        var canvasSummary = {
+          firstLabel: A2($elm$core$Dict$get, canvasId, canvasLabels),
+          firstPageIndex: A2($elm$core$Dict$get, canvasId, canvasIndexes),
+          lastLabel: A2($elm$core$Dict$get, canvasId, canvasLabels)
+        };
+        return _Utils_Tuple2(
+          A2($author$project$RangeIndex$combine, accumulated, canvasSummary),
+          nextState
+        );
+      } else {
+        var nestedRange = item.a;
+        var _v3 = A5($author$project$RangeIndex$walkRange, canvasIndexes, canvasLabels, pathRev, nestedRange, state);
+        var nestedSummary = _v3.a;
+        var nextState = _v3.b;
+        return _Utils_Tuple2(
+          A2($author$project$RangeIndex$combine, accumulated, nestedSummary),
+          nextState
+        );
+      }
+    }
+  );
+  var $author$project$RangeIndex$walkRange = F5(
+    function(canvasIndexes, canvasLabels, parentPathRev, range, state) {
+      var pathRev = A2($elm$core$List$cons, range, parentPathRev);
+      var _v0 = A3(
+        $elm$core$List$foldl,
+        A3($author$project$RangeIndex$indexItem, canvasIndexes, canvasLabels, pathRev),
+        _Utils_Tuple2($author$project$RangeIndex$emptySummary, state),
+        range.items
+      );
+      var summary = _v0.a;
+      var nextState = _v0.b;
+      var indexedState = _Utils_update(
+        nextState,
+        {
+          firstPageIndexes: A3($elm$core$Dict$insert, range.id, summary.firstPageIndex, nextState.firstPageIndexes),
+          labelBoundsByRange: A3(
+            $elm$core$Dict$insert,
+            range.id,
+            { firstLabel: summary.firstLabel, lastLabel: summary.lastLabel },
+            nextState.labelBoundsByRange
+          )
+        }
+      );
+      return _Utils_Tuple2(summary, indexedState);
+    }
+  );
+  var $author$project$RangeIndex$build = F3(
+    function(canvasIndexes, canvasLabels, ranges) {
+      var initialState = { canvasIdsByRange: $elm$core$Dict$empty, firstPageIndexes: $elm$core$Dict$empty, labelBoundsByRange: $elm$core$Dict$empty, rangeIdsByCanvas: $elm$core$Dict$empty, reversedRangesByCanvas: $elm$core$Dict$empty };
+      var finalState = A3(
+        $elm$core$List$foldl,
+        F2(
+          function(range, state) {
+            return A5($author$project$RangeIndex$walkRange, canvasIndexes, canvasLabels, _List_Nil, range, state).b;
+          }
+        ),
+        initialState,
         ranges
       );
-    }
-  );
-  var $rism_digital$elm_iiif$IIIF$Presentation$isPagedLayout = function(layout) {
-    if (layout.$ === "LayoutV2") {
-      var hint = layout.a;
-      if (hint.$ === "PagedHint") {
-        return true;
-      } else {
-        return false;
-      }
-    } else {
-      var behaviour = layout.a;
-      return A2($elm$core$List$member, $rism_digital$elm_iiif$IIIF$Presentation$PagedBehavior, behaviour);
-    }
-  };
-  var $author$project$Main$layoutConfigUpdated = _Platform_outgoingPort(
-    "layoutConfigUpdated",
-    function($) {
-      return $elm$json$Json$Encode$object(
-        _List_fromArray(
-          [
-            _Utils_Tuple2(
-              "direction",
-              $elm$json$Json$Encode$string($.direction)
-            ),
-            _Utils_Tuple2(
-              "mode",
-              $elm$json$Json$Encode$string($.mode)
-            )
-          ]
-        )
+      var rangesByCanvas = A2(
+        $elm$core$Dict$map,
+        F2(
+          function(_v0, reversed) {
+            return $elm$core$List$reverse(reversed);
+          }
+        ),
+        finalState.reversedRangesByCanvas
+      );
+      return $author$project$RangeIndex$Indexes(
+        { canvasIdsByRange: finalState.canvasIdsByRange, firstPageIndexes: finalState.firstPageIndexes, labelBoundsByRange: finalState.labelBoundsByRange, rangesByCanvas, topLevelRanges: ranges }
       );
     }
   );
-  var $author$project$Main$layoutModeToString = F2(
-    function(viewMode, shiftByOne) {
-      if (viewMode.$ === "OneUp") {
-        return "single";
-      } else {
-        return shiftByOne ? "spread-shift" : "spread";
-      }
-    }
-  );
-  var $rism_digital$elm_iiif$IIIF$Presentation$canvasAspect = function(canvas) {
-    var _v0 = _Utils_Tuple2(canvas.width, canvas.height);
-    if (_v0.a.$ === "Just" && _v0.b.$ === "Just") {
-      var w = _v0.a.a;
-      var h = _v0.b.a;
-      return w > 0 ? h / w : 1;
-    } else {
-      return 1;
-    }
-  };
   var $rism_digital$elm_iiif$IIIF$Language$extractTextFromLanguageMap = F2(
     function(lang, langMap) {
       return A2(
@@ -18730,6 +19245,57 @@
       return A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, $rism_digital$elm_iiif$IIIF$Language$Default, langMap);
     } else {
       return "Untitled";
+    }
+  };
+  var $rism_digital$elm_iiif$IIIF$Presentation$isPagedLayout = function(layout) {
+    if (layout.$ === "LayoutV2") {
+      var hint = layout.a;
+      if (hint.$ === "PagedHint") {
+        return true;
+      } else {
+        return false;
+      }
+    } else {
+      var behaviour = layout.a;
+      return A2($elm$core$List$member, $rism_digital$elm_iiif$IIIF$Presentation$PagedBehavior, behaviour);
+    }
+  };
+  var $author$project$Main$layoutConfigUpdated = _Platform_outgoingPort(
+    "layoutConfigUpdated",
+    function($) {
+      return $elm$json$Json$Encode$object(
+        _List_fromArray(
+          [
+            _Utils_Tuple2(
+              "direction",
+              $elm$json$Json$Encode$string($.direction)
+            ),
+            _Utils_Tuple2(
+              "mode",
+              $elm$json$Json$Encode$string($.mode)
+            )
+          ]
+        )
+      );
+    }
+  );
+  var $author$project$Main$layoutModeToString = F2(
+    function(viewMode, shiftByOne) {
+      if (viewMode.$ === "OneUp") {
+        return "single";
+      } else {
+        return shiftByOne ? "spread-shift" : "spread";
+      }
+    }
+  );
+  var $rism_digital$elm_iiif$IIIF$Presentation$canvasAspect = function(canvas) {
+    var _v0 = _Utils_Tuple2(canvas.width, canvas.height);
+    if (_v0.a.$ === "Just" && _v0.b.$ === "Just") {
+      var w = _v0.a.a;
+      var h = _v0.b.a;
+      return w > 0 ? h / w : 1;
+    } else {
+      return 1;
     }
   };
   var $rism_digital$elm_iiif$IIIF$Image$createFormatComponent = function(fmt) {
@@ -19012,27 +19578,17 @@
         var thumbnail = _v0.a;
         return $author$project$Model$thumbnailUrlForImage(thumbnail);
       } else {
-        var _v1 = $elm$core$List$head(
+        return A2(
+          $elm$core$Maybe$withDefault,
+          "",
           A2(
-            $elm$core$List$filter,
+            $elm$core$Maybe$map,
             function($) {
-              return $.isPrimary;
+              return $.thumbUrl;
             },
-            images
+            $author$project$Model$primaryImageFromList(images)
           )
         );
-        if (_v1.$ === "Just") {
-          var image = _v1.a;
-          return image.thumbUrl;
-        } else {
-          var _v2 = $elm$core$List$head(images);
-          if (_v2.$ === "Just") {
-            var image = _v2.a;
-            return image.thumbUrl;
-          } else {
-            return "";
-          }
-        }
       }
     }
   );
@@ -19519,15 +20075,7 @@
             function($) {
               return $.thumbUrl;
             },
-            $elm$core$List$head(
-              A2(
-                $elm$core$List$filter,
-                function($) {
-                  return $.isPrimary;
-                },
-                images
-              )
-            )
+            $author$project$Model$primaryImageFromList(images)
           )
         );
         return $elm$core$Maybe$Just(
@@ -19543,6 +20091,22 @@
           }
         );
       }
+    }
+  );
+  var $rism_digital$elm_iiif$IIIF$Presentation$toManifest = function(_v0) {
+    var iiifManifest = _v0.b;
+    return iiifManifest;
+  };
+  var $rism_digital$elm_iiif$IIIF$Presentation$withManifest = F2(
+    function(accessor, manifest) {
+      return accessor(
+        $rism_digital$elm_iiif$IIIF$Presentation$toManifest(manifest)
+      );
+    }
+  );
+  var $rism_digital$elm_iiif$IIIF$Presentation$toCanvases = $rism_digital$elm_iiif$IIIF$Presentation$withManifest(
+    function($) {
+      return $.canvases;
     }
   );
   var $author$project$Model$manifestToPages = F2(
@@ -19671,7 +20235,6 @@
       ]
     )
   );
-  var $elm$core$String$toLower = _String_toLower;
   var $author$project$Main$resolveInitialPageIndex = F2(
     function(encoded, pages) {
       var fallback = 0;
@@ -19774,6 +20337,275 @@
       }
     }
   );
+  var $elm$url$Url$addPort = F2(
+    function(maybePort, starter) {
+      if (maybePort.$ === "Nothing") {
+        return starter;
+      } else {
+        var port_ = maybePort.a;
+        return starter + (":" + $elm$core$String$fromInt(port_));
+      }
+    }
+  );
+  var $elm$url$Url$addPrefixed = F3(
+    function(prefix, maybeSegment, starter) {
+      if (maybeSegment.$ === "Nothing") {
+        return starter;
+      } else {
+        var segment = maybeSegment.a;
+        return _Utils_ap(
+          starter,
+          _Utils_ap(prefix, segment)
+        );
+      }
+    }
+  );
+  var $elm$url$Url$toString = function(url) {
+    var http = (function() {
+      var _v0 = url.protocol;
+      if (_v0.$ === "Http") {
+        return "http://";
+      } else {
+        return "https://";
+      }
+    })();
+    return A3(
+      $elm$url$Url$addPrefixed,
+      "#",
+      url.fragment,
+      A3(
+        $elm$url$Url$addPrefixed,
+        "?",
+        url.query,
+        _Utils_ap(
+          A2(
+            $elm$url$Url$addPort,
+            url.port_,
+            _Utils_ap(http, url.host)
+          ),
+          url.path
+        )
+      )
+    );
+  };
+  var $author$project$Auth$normalizedProbeUrl = function(probeUrl) {
+    return A2(
+      $elm$core$Maybe$withDefault,
+      probeUrl,
+      A2(
+        $elm$core$Maybe$map,
+        function(parsed) {
+          return $elm$url$Url$toString(
+            _Utils_update(
+              parsed,
+              { fragment: $elm$core$Maybe$Nothing, query: $elm$core$Maybe$Nothing }
+            )
+          );
+        },
+        $elm$url$Url$fromString(probeUrl)
+      )
+    );
+  };
+  var $author$project$Auth$associationsFromProbe = function(probe) {
+    var supportedAccesses = _Utils_ap(
+      A2(
+        $elm$core$List$filter,
+        function(access) {
+          return _Utils_eq(access.profile, $rism_digital$elm_iiif$IIIF$Auth$External);
+        },
+        probe.services
+      ),
+      A2(
+        $elm$core$List$filter,
+        function(access) {
+          return _Utils_eq(access.profile, $rism_digital$elm_iiif$IIIF$Auth$Active);
+        },
+        probe.services
+      )
+    );
+    var candidateSignature = function(access) {
+      return $elm$core$List$head(
+        A2(
+          $elm$core$List$filterMap,
+          function(service) {
+            if (service.$ === "RelatedTokenService") {
+              var token = service.a;
+              return $elm$core$Maybe$Just(
+                A2($elm$core$Maybe$withDefault, "", access.id) + ("|" + token.id)
+              );
+            } else {
+              return $elm$core$Maybe$Nothing;
+            }
+          },
+          access.services
+        )
+      );
+    };
+    var familyKey = $author$project$Auth$normalizedProbeUrl(probe.id) + ("|" + A2(
+      $elm$core$String$join,
+      "|",
+      A2($elm$core$List$filterMap, candidateSignature, supportedAccesses)
+    ));
+    var association = function(access) {
+      return A2(
+        $elm$core$Maybe$map,
+        function(token) {
+          return {
+            access,
+            key: familyKey,
+            logout: $elm$core$List$head(
+              A2(
+                $elm$core$List$filterMap,
+                function(service) {
+                  if (service.$ === "RelatedTokenService") {
+                    return $elm$core$Maybe$Nothing;
+                  } else {
+                    var logout = service.a;
+                    return $elm$core$Maybe$Just(logout);
+                  }
+                },
+                access.services
+              )
+            ),
+            probe,
+            token
+          };
+        },
+        $elm$core$List$head(
+          A2(
+            $elm$core$List$filterMap,
+            function(service) {
+              if (service.$ === "RelatedTokenService") {
+                var token = service.a;
+                return $elm$core$Maybe$Just(token);
+              } else {
+                return $elm$core$Maybe$Nothing;
+              }
+            },
+            access.services
+          )
+        )
+      );
+    };
+    return A2($elm$core$List$filterMap, association, supportedAccesses);
+  };
+  var $author$project$Auth$unsupportedMessage = function(serviceTypes) {
+    return "Unsupported authorization service: " + (A2($elm$core$String$join, ", ", serviceTypes) + ".");
+  };
+  var $author$project$Auth$unsupportedPolicyError = function(probes) {
+    var accesses = A2(
+      $elm$core$List$concatMap,
+      function($) {
+        return $.services;
+      },
+      probes
+    );
+    var _v0 = $elm$core$List$head(
+      A2(
+        $elm$core$List$filter,
+        function(access2) {
+          return _Utils_eq(access2.profile, $rism_digital$elm_iiif$IIIF$Auth$Kiosk);
+        },
+        accesses
+      )
+    );
+    if (_v0.$ === "Just") {
+      var access = _v0.a;
+      return $elm$core$Maybe$Just(
+        "IIIF Auth 2 '" + ((function() {
+          var _v1 = access.profile;
+          switch (_v1.$) {
+            case "Active":
+              return "active";
+            case "Kiosk":
+              return "kiosk";
+            default:
+              return "external";
+          }
+        })() + "' access is not supported; supported profiles are 'external' and 'active'.")
+      );
+    } else {
+      return $elm$core$Maybe$Nothing;
+    }
+  };
+  var $author$project$Auth$supportedAssociations = function(discovery) {
+    if (!$elm$core$List$isEmpty(discovery.unsupportedServiceTypes)) {
+      return $elm$core$Result$Err(
+        $author$project$Auth$unsupportedMessage(discovery.unsupportedServiceTypes)
+      );
+    } else {
+      var associations = A2(
+        $elm$core$Maybe$withDefault,
+        _List_Nil,
+        $elm$core$List$head(
+          A2(
+            $elm$core$List$filter,
+            A2($elm$core$Basics$composeL, $elm$core$Basics$not, $elm$core$List$isEmpty),
+            A2($elm$core$List$map, $author$project$Auth$associationsFromProbe, discovery.probes)
+          )
+        )
+      );
+      if ($elm$core$List$isEmpty(associations)) {
+        var _v0 = $author$project$Auth$unsupportedPolicyError(discovery.probes);
+        if (_v0.$ === "Just") {
+          var message = _v0.a;
+          return $elm$core$Result$Err(message);
+        } else {
+          return $elm$core$Result$Err("No supported Auth 2 external or active access service was provided.");
+        }
+      } else {
+        return $elm$core$Result$Ok(associations);
+      }
+    }
+  };
+  var $author$project$Auth$sourceFamilyKey = function(source) {
+    var _v0 = source.auth;
+    if (_v0.$ === "Discovered") {
+      var discovery = _v0.a;
+      return A2(
+        $elm$core$Maybe$map,
+        function($) {
+          return $.key;
+        },
+        A2(
+          $elm$core$Maybe$andThen,
+          $elm$core$List$head,
+          $elm$core$Result$toMaybe(
+            $author$project$Auth$supportedAssociations(discovery)
+          )
+        )
+      );
+    } else {
+      return $elm$core$Maybe$Nothing;
+    }
+  };
+  var $author$project$Auth$thumbnailCrossOrigin = F2(
+    function(sourceId, model) {
+      var _v0 = A2($elm$core$Dict$get, sourceId, model.sources);
+      if (_v0.$ === "Just") {
+        var source = _v0.a;
+        return $author$project$Auth$requiresAuthorization(source.auth) ? A2(
+          $elm$core$Maybe$map,
+          function(state) {
+            if (state.$ === "AnonymousFamily") {
+              return "anonymous";
+            } else {
+              return "use-credentials";
+            }
+          },
+          A2(
+            $elm$core$Maybe$andThen,
+            function(key) {
+              return A2($elm$core$Dict$get, key, model.familyStates);
+            },
+            $author$project$Auth$sourceFamilyKey(source)
+          )
+        ) : $elm$core$Maybe$Just("anonymous");
+      } else {
+        return $elm$core$Maybe$Nothing;
+      }
+    }
+  );
   var $rism_digital$elm_iiif$IIIF$Presentation$toViewingDirection = $rism_digital$elm_iiif$IIIF$Presentation$withManifest(
     function($) {
       return $.viewingDirection;
@@ -19796,19 +20628,6 @@
     function(resourceId, initialPage, model, manifest) {
       var viewingDirection = $rism_digital$elm_iiif$IIIF$Presentation$toViewingDirection(manifest);
       var pages = A2($author$project$Model$manifestToPages, model.detectedLanguage, manifest);
-      var tileSources = A2(
-        $elm$core$List$filterMap,
-        function(page) {
-          return A2(
-            $elm$core$Maybe$map,
-            function(image) {
-              return { canvasId: page.canvasId, isStatic: image.isStatic, sourceId: image.sourceId, url: image.tileSource };
-            },
-            $author$project$Model$primaryImage(page)
-          );
-        },
-        pages
-      );
       var pagedLayout = $rism_digital$elm_iiif$IIIF$Presentation$isPagedLayout(
         $rism_digital$elm_iiif$IIIF$Presentation$manifestViewingLayout(manifest)
       );
@@ -19825,6 +20644,19 @@
       var layoutMode = A2($author$project$Main$layoutModeToString, viewMode, shiftByOne);
       var initialPageIndex = A2($author$project$Main$resolveInitialPageIndex, initialPage, pages);
       var direction = $author$project$Main$viewingDirectionToString(viewingDirection);
+      var canvases = $rism_digital$elm_iiif$IIIF$Presentation$toCanvases(manifest);
+      var canvasLabelMap = $elm$core$Dict$fromList(
+        A2(
+          $elm$core$List$map,
+          function(canvas) {
+            return _Utils_Tuple2(
+              canvas.id,
+              $rism_digital$elm_iiif$IIIF$Presentation$canvasLabel(canvas)
+            );
+          },
+          canvases
+        )
+      );
       var canvasIndexMap = $elm$core$Dict$fromList(
         A2(
           $elm$core$List$indexedMap,
@@ -19833,15 +20665,16 @@
               return _Utils_Tuple2(canvas.id, index);
             }
           ),
-          $rism_digital$elm_iiif$IIIF$Presentation$toCanvases(manifest)
+          canvases
         )
       );
-      var rangeIndexMap = A2(
-        $elm$core$Maybe$withDefault,
-        $elm$core$Dict$empty,
+      var rangeIndexes = A3(
+        $author$project$RangeIndex$build,
+        canvasIndexMap,
+        canvasLabelMap,
         A2(
-          $elm$core$Maybe$map,
-          $author$project$Main$buildRangeIndexMap(canvasIndexMap),
+          $elm$core$Maybe$withDefault,
+          _List_Nil,
           $rism_digital$elm_iiif$IIIF$Presentation$toRanges(manifest)
         )
       );
@@ -19860,14 +20693,39 @@
           pages
         )
       );
+      var initialAuth = A2($author$project$Auth$registerSources, authSources, $author$project$Auth$init);
+      var tileSources = A2(
+        $elm$core$List$filterMap,
+        function(page) {
+          return A2(
+            $elm$core$Maybe$map,
+            function(image) {
+              return {
+                canvasId: page.canvasId,
+                isStatic: image.isStatic,
+                preview: {
+                  crossOrigin: A2($author$project$Auth$thumbnailCrossOrigin, image.sourceId, initialAuth),
+                  fallbackUrl: page.fallbackThumbUrl,
+                  url: page.thumbUrl
+                },
+                sourceId: image.sourceId,
+                url: image.tileSource
+              };
+            },
+            $author$project$Model$primaryImage(page)
+          );
+        },
+        pages
+      );
       return _Utils_Tuple2(
         _Utils_update(
           model,
           {
+            annotationGeneration: model.annotationGeneration + 1,
             annotationLoading: $elm$core$Set$empty,
-            annotationSources: $author$project$Main$annotationSourcesForManifest(manifest),
+            annotationSources: $author$project$Main$annotationSourcesForCanvases(canvases),
             annotationsByCanvas: $elm$core$Dict$empty,
-            auth: A2($author$project$Auth$registerSources, authSources, $author$project$Auth$init),
+            auth: initialAuth,
             currentZoom: $elm$core$Maybe$Nothing,
             filters: $author$project$Filters$resetFilters,
             hasTileSources: !$elm$core$List$isEmpty(tileSources),
@@ -19875,7 +20733,7 @@
             isViewerLoading: false,
             pageViewOpen: false,
             pages,
-            rangeIndexMap,
+            rangeIndexes,
             response: $author$project$Model$Loaded(manifest),
             selectedIndex: $elm$core$List$isEmpty(pages) ? $elm$core$Maybe$Nothing : $elm$core$Maybe$Just(initialPageIndex),
             shiftByOne,
@@ -20130,7 +20988,40 @@
     }
   };
   var $author$project$Main$layoutModeUpdated = _Platform_outgoingPort("layoutModeUpdated", $elm$json$Json$Encode$string);
+  var $elm$core$Tuple$mapSecond = F2(
+    function(func, _v0) {
+      var x = _v0.a;
+      var y = _v0.b;
+      return _Utils_Tuple2(
+        x,
+        func(y)
+      );
+    }
+  );
   var $author$project$Main$mobileWidthBreakpoint = 720;
+  var $author$project$Main$pagePreviewPoliciesUpdated = _Platform_outgoingPort(
+    "pagePreviewPoliciesUpdated",
+    $elm$json$Json$Encode$list(
+      function($) {
+        return $elm$json$Json$Encode$object(
+          _List_fromArray(
+            [
+              _Utils_Tuple2(
+                "crossOrigin",
+                (function($2) {
+                  return A3($elm$core$Maybe$destruct, $elm$json$Json$Encode$null, $elm$json$Json$Encode$string, $2);
+                })($.crossOrigin)
+              ),
+              _Utils_Tuple2(
+                "sourceId",
+                $elm$json$Json$Encode$string($.sourceId)
+              )
+            ]
+          )
+        );
+      }
+    )
+  );
   var $author$project$Main$replaceCollectionById = F3(
     function(collectionId, replacement, collection) {
       var rebuildUp = F2(
@@ -20244,9 +21135,9 @@
       );
     }
   );
-  var $author$project$Msg$ServerRespondedWithAnnotations = F2(
-    function(a, b) {
-      return { $: "ServerRespondedWithAnnotations", a, b };
+  var $author$project$Msg$ServerRespondedWithAnnotations = F3(
+    function(a, b, c) {
+      return { $: "ServerRespondedWithAnnotations", a, b, c };
     }
   );
   var $elm$url$Url$Builder$QueryParameter = F2(
@@ -20311,6 +21202,87 @@
         return $elm$core$Maybe$Nothing;
     }
   };
+  var $author$project$Annotation$WithBodies = F2(
+    function(annotation, bodies) {
+      return { annotation, bodies };
+    }
+  );
+  var $rism_digital$elm_iiif$IIIF$Annotation$AnnotationBody = F3(
+    function(value, format, language) {
+      return { format, language, value };
+    }
+  );
+  function $author$project$Annotation$cyclic$bodiesDecoder() {
+    return $elm$json$Json$Decode$oneOf(
+      _List_fromArray(
+        [
+          A2(
+            $elm$json$Json$Decode$map,
+            $elm$core$List$concat,
+            $elm$json$Json$Decode$list(
+              $elm$json$Json$Decode$lazy(
+                function(_v0) {
+                  return $author$project$Annotation$cyclic$bodiesDecoder();
+                }
+              )
+            )
+          ),
+          A2(
+            $elm$json$Json$Decode$map,
+            $elm$core$List$singleton,
+            A4(
+              $elm$json$Json$Decode$map3,
+              $rism_digital$elm_iiif$IIIF$Annotation$AnnotationBody,
+              $elm$json$Json$Decode$oneOf(
+                _List_fromArray(
+                  [
+                    A2($elm$json$Json$Decode$field, "value", $elm$json$Json$Decode$string),
+                    A2($elm$json$Json$Decode$field, "chars", $elm$json$Json$Decode$string)
+                  ]
+                )
+              ),
+              $elm$json$Json$Decode$maybe(
+                A2($elm$json$Json$Decode$field, "format", $elm$json$Json$Decode$string)
+              ),
+              $elm$json$Json$Decode$maybe(
+                A2($elm$json$Json$Decode$field, "language", $elm$json$Json$Decode$string)
+              )
+            )
+          ),
+          A2(
+            $elm$json$Json$Decode$map,
+            function(value) {
+              return _List_fromArray(
+                [
+                  { format: $elm$core$Maybe$Nothing, language: $elm$core$Maybe$Nothing, value }
+                ]
+              );
+            },
+            $elm$json$Json$Decode$string
+          ),
+          $elm$json$Json$Decode$succeed(_List_Nil)
+        ]
+      )
+    );
+  }
+  try {
+    $author$project$Annotation$bodiesDecoder = $author$project$Annotation$cyclic$bodiesDecoder();
+    $author$project$Annotation$cyclic$bodiesDecoder = function() {
+      return $author$project$Annotation$bodiesDecoder;
+    };
+  } catch ($) {
+    throw "Some top-level definitions from `Annotation` are causing infinite recursion:\n\n  \u250C\u2500\u2500\u2500\u2500\u2500\u2510\n  \u2502    bodiesDecoder\n  \u2514\u2500\u2500\u2500\u2500\u2500\u2518\n\nThese errors are very tricky, so read https://elm-lang.org/0.19.1/bad-recursion to learn how to fix it!";
+  }
+  var $author$project$Annotation$bodiesDecoder;
+  var $author$project$Annotation$bodyDecoder = $elm$json$Json$Decode$oneOf(
+    _List_fromArray(
+      [
+        A2($elm$json$Json$Decode$field, "body", $author$project$Annotation$bodiesDecoder),
+        A2($elm$json$Json$Decode$field, "resource", $author$project$Annotation$bodiesDecoder),
+        $elm$json$Json$Decode$succeed(_List_Nil)
+      ]
+    )
+  );
   var $rism_digital$elm_iiif$IIIF$Annotation$bodyFromString = function(value) {
     return { format: $elm$core$Maybe$Nothing, language: $elm$core$Maybe$Nothing, value };
   };
@@ -20613,30 +21585,95 @@
       A2($elm$json$Json$Decode$field, "motivation", $elm$json$Json$Decode$string)
     )
   );
-  var $rism_digital$elm_iiif$IIIF$Annotation$decodePage = $elm$json$Json$Decode$oneOf(
+  var $rism_digital$elm_iiif$IIIF$Annotation$pageDecoder = function(decoder) {
+    return $elm$json$Json$Decode$oneOf(
+      _List_fromArray(
+        [
+          A2(
+            $elm$json$Json$Decode$field,
+            "resources",
+            $elm$json$Json$Decode$list(decoder)
+          ),
+          A2(
+            $elm$json$Json$Decode$field,
+            "items",
+            $elm$json$Json$Decode$list(decoder)
+          ),
+          $elm$json$Json$Decode$list(decoder)
+        ]
+      )
+    );
+  };
+  var $rism_digital$elm_iiif$IIIF$Annotation$decodePage = $rism_digital$elm_iiif$IIIF$Annotation$pageDecoder($rism_digital$elm_iiif$IIIF$Annotation$annotationDecoder);
+  var $author$project$Annotation$annotationDecoder = A3(
+    $elm$json$Json$Decode$map2,
+    $author$project$Annotation$WithBodies,
+    A2(
+      $elm$json$Json$Decode$andThen,
+      function(value) {
+        var _v0 = A2(
+          $elm$json$Json$Decode$decodeValue,
+          $rism_digital$elm_iiif$IIIF$Annotation$decodePage,
+          A2(
+            $elm$json$Json$Encode$list,
+            $elm$core$Basics$identity,
+            _List_fromArray(
+              [value]
+            )
+          )
+        );
+        if (_v0.$ === "Ok") {
+          if (_v0.a.b && !_v0.a.b.b) {
+            var _v1 = _v0.a;
+            var annotation = _v1.a;
+            return $elm$json$Json$Decode$succeed(annotation);
+          } else {
+            return $elm$json$Json$Decode$fail("Expected one annotation");
+          }
+        } else {
+          var error = _v0.a;
+          return $elm$json$Json$Decode$fail(
+            $elm$json$Json$Decode$errorToString(error)
+          );
+        }
+      },
+      $elm$json$Json$Decode$value
+    ),
+    $author$project$Annotation$bodyDecoder
+  );
+  var $author$project$Annotation$decodePage = $elm$json$Json$Decode$oneOf(
     _List_fromArray(
       [
         A2(
           $elm$json$Json$Decode$field,
           "resources",
-          $elm$json$Json$Decode$list($rism_digital$elm_iiif$IIIF$Annotation$annotationDecoder)
+          $elm$json$Json$Decode$list($author$project$Annotation$annotationDecoder)
         ),
         A2(
           $elm$json$Json$Decode$field,
           "items",
-          $elm$json$Json$Decode$list($rism_digital$elm_iiif$IIIF$Annotation$annotationDecoder)
+          $elm$json$Json$Decode$list($author$project$Annotation$annotationDecoder)
         ),
-        $elm$json$Json$Decode$list($rism_digital$elm_iiif$IIIF$Annotation$annotationDecoder)
+        $elm$json$Json$Decode$list($author$project$Annotation$annotationDecoder)
       ]
     )
   );
-  var $rism_digital$elm_iiif$IIIF$requestAnnotationPage = F3(
+  var $author$project$Annotation$requestPage = F3(
     function(responseMsg, acceptHeaders, url) {
-      return A3(
-        $rism_digital$elm_iiif$IIIF$Internal$Request$request,
-        acceptHeaders,
-        A2($elm$http$Http$expectJson, responseMsg, $rism_digital$elm_iiif$IIIF$Annotation$decodePage),
-        url
+      return $elm$http$Http$request(
+        {
+          body: $elm$http$Http$emptyBody,
+          expect: A2($elm$http$Http$expectJson, responseMsg, $author$project$Annotation$decodePage),
+          headers: A2(
+            $elm$core$List$map,
+            $elm$http$Http$header("Accept"),
+            acceptHeaders
+          ),
+          method: "GET",
+          timeout: $elm$core$Maybe$Nothing,
+          tracker: $elm$core$Maybe$Nothing,
+          url
+        }
       );
     }
   );
@@ -20664,8 +21701,8 @@
         );
         var request = function(url) {
           return A3(
-            $rism_digital$elm_iiif$IIIF$requestAnnotationPage,
-            $author$project$Msg$ServerRespondedWithAnnotations(canvasId),
+            $author$project$Annotation$requestPage,
+            A2($author$project$Msg$ServerRespondedWithAnnotations, model.annotationGeneration, canvasId),
             model.acceptHeaders,
             url
           );
@@ -20679,7 +21716,7 @@
               } else {
                 var value = source.a;
                 return $elm$core$Result$toMaybe(
-                  A2($elm$json$Json$Decode$decodeValue, $rism_digital$elm_iiif$IIIF$Annotation$decodePage, value)
+                  A2($elm$json$Json$Decode$decodeValue, $author$project$Annotation$decodePage, value)
                 );
               }
             },
@@ -20736,7 +21773,7 @@
                     {
                       annotations: A2(
                         $elm$core$List$map,
-                        $author$project$Annotation$encode(
+                        $author$project$Annotation$encodeWithBodies(
                           A2($author$project$Main$annotationImageServiceForCanvas, canvasId, model)
                         ),
                         inlineAnnotations
@@ -21730,227 +22767,6 @@
       }
     }
   );
-  var $elm$url$Url$addPort = F2(
-    function(maybePort, starter) {
-      if (maybePort.$ === "Nothing") {
-        return starter;
-      } else {
-        var port_ = maybePort.a;
-        return starter + (":" + $elm$core$String$fromInt(port_));
-      }
-    }
-  );
-  var $elm$url$Url$addPrefixed = F3(
-    function(prefix, maybeSegment, starter) {
-      if (maybeSegment.$ === "Nothing") {
-        return starter;
-      } else {
-        var segment = maybeSegment.a;
-        return _Utils_ap(
-          starter,
-          _Utils_ap(prefix, segment)
-        );
-      }
-    }
-  );
-  var $elm$url$Url$toString = function(url) {
-    var http = (function() {
-      var _v0 = url.protocol;
-      if (_v0.$ === "Http") {
-        return "http://";
-      } else {
-        return "https://";
-      }
-    })();
-    return A3(
-      $elm$url$Url$addPrefixed,
-      "#",
-      url.fragment,
-      A3(
-        $elm$url$Url$addPrefixed,
-        "?",
-        url.query,
-        _Utils_ap(
-          A2(
-            $elm$url$Url$addPort,
-            url.port_,
-            _Utils_ap(http, url.host)
-          ),
-          url.path
-        )
-      )
-    );
-  };
-  var $author$project$Auth$normalizedProbeUrl = function(probeUrl) {
-    return A2(
-      $elm$core$Maybe$withDefault,
-      probeUrl,
-      A2(
-        $elm$core$Maybe$map,
-        function(parsed) {
-          return $elm$url$Url$toString(
-            _Utils_update(
-              parsed,
-              { fragment: $elm$core$Maybe$Nothing, query: $elm$core$Maybe$Nothing }
-            )
-          );
-        },
-        $elm$url$Url$fromString(probeUrl)
-      )
-    );
-  };
-  var $author$project$Auth$associationsFromProbe = function(probe) {
-    var supportedAccesses = _Utils_ap(
-      A2(
-        $elm$core$List$filter,
-        function(access) {
-          return _Utils_eq(access.profile, $rism_digital$elm_iiif$IIIF$Auth$External);
-        },
-        probe.services
-      ),
-      A2(
-        $elm$core$List$filter,
-        function(access) {
-          return _Utils_eq(access.profile, $rism_digital$elm_iiif$IIIF$Auth$Active);
-        },
-        probe.services
-      )
-    );
-    var candidateSignature = function(access) {
-      return $elm$core$List$head(
-        A2(
-          $elm$core$List$filterMap,
-          function(service) {
-            if (service.$ === "RelatedTokenService") {
-              var token = service.a;
-              return $elm$core$Maybe$Just(
-                A2($elm$core$Maybe$withDefault, "", access.id) + ("|" + token.id)
-              );
-            } else {
-              return $elm$core$Maybe$Nothing;
-            }
-          },
-          access.services
-        )
-      );
-    };
-    var familyKey = $author$project$Auth$normalizedProbeUrl(probe.id) + ("|" + A2(
-      $elm$core$String$join,
-      "|",
-      A2($elm$core$List$filterMap, candidateSignature, supportedAccesses)
-    ));
-    var association = function(access) {
-      return A2(
-        $elm$core$Maybe$map,
-        function(token) {
-          return {
-            access,
-            key: familyKey,
-            logout: $elm$core$List$head(
-              A2(
-                $elm$core$List$filterMap,
-                function(service) {
-                  if (service.$ === "RelatedTokenService") {
-                    return $elm$core$Maybe$Nothing;
-                  } else {
-                    var logout = service.a;
-                    return $elm$core$Maybe$Just(logout);
-                  }
-                },
-                access.services
-              )
-            ),
-            probe,
-            token
-          };
-        },
-        $elm$core$List$head(
-          A2(
-            $elm$core$List$filterMap,
-            function(service) {
-              if (service.$ === "RelatedTokenService") {
-                var token = service.a;
-                return $elm$core$Maybe$Just(token);
-              } else {
-                return $elm$core$Maybe$Nothing;
-              }
-            },
-            access.services
-          )
-        )
-      );
-    };
-    return A2($elm$core$List$filterMap, association, supportedAccesses);
-  };
-  var $author$project$Auth$unsupportedMessage = function(serviceTypes) {
-    return "Unsupported authorization service: " + (A2($elm$core$String$join, ", ", serviceTypes) + ".");
-  };
-  var $author$project$Auth$unsupportedPolicyError = function(probes) {
-    var accesses = A2(
-      $elm$core$List$concatMap,
-      function($) {
-        return $.services;
-      },
-      probes
-    );
-    var _v0 = $elm$core$List$head(
-      A2(
-        $elm$core$List$filter,
-        function(access2) {
-          return _Utils_eq(access2.profile, $rism_digital$elm_iiif$IIIF$Auth$Kiosk);
-        },
-        accesses
-      )
-    );
-    if (_v0.$ === "Just") {
-      var access = _v0.a;
-      return $elm$core$Maybe$Just(
-        "IIIF Auth 2 '" + ((function() {
-          var _v1 = access.profile;
-          switch (_v1.$) {
-            case "Active":
-              return "active";
-            case "Kiosk":
-              return "kiosk";
-            default:
-              return "external";
-          }
-        })() + "' access is not supported; supported profiles are 'external' and 'active'.")
-      );
-    } else {
-      return $elm$core$Maybe$Nothing;
-    }
-  };
-  var $author$project$Auth$supportedAssociations = function(discovery) {
-    if (!$elm$core$List$isEmpty(discovery.unsupportedServiceTypes)) {
-      return $elm$core$Result$Err(
-        $author$project$Auth$unsupportedMessage(discovery.unsupportedServiceTypes)
-      );
-    } else {
-      var associations = A2(
-        $elm$core$Maybe$withDefault,
-        _List_Nil,
-        $elm$core$List$head(
-          A2(
-            $elm$core$List$filter,
-            A2($elm$core$Basics$composeL, $elm$core$Basics$not, $elm$core$List$isEmpty),
-            A2($elm$core$List$map, $author$project$Auth$associationsFromProbe, discovery.probes)
-          )
-        )
-      );
-      if ($elm$core$List$isEmpty(associations)) {
-        var _v0 = $author$project$Auth$unsupportedPolicyError(discovery.probes);
-        if (_v0.$ === "Just") {
-          var message = _v0.a;
-          return $elm$core$Result$Err(message);
-        } else {
-          return $elm$core$Result$Err("No supported Auth 2 external or active access service was provided.");
-        }
-      } else {
-        return $elm$core$Result$Ok(associations);
-      }
-    }
-  };
   var $author$project$Auth$beginAuthorization = F4(
     function(requestId, discovery, infoJson, model) {
       var withInfo = _Utils_update(
@@ -22594,27 +23410,6 @@
       );
     }
   );
-  var $author$project$Auth$sourceFamilyKey = function(source) {
-    var _v0 = source.auth;
-    if (_v0.$ === "Discovered") {
-      var discovery = _v0.a;
-      return A2(
-        $elm$core$Maybe$map,
-        function($) {
-          return $.key;
-        },
-        A2(
-          $elm$core$Maybe$andThen,
-          $elm$core$List$head,
-          $elm$core$Result$toMaybe(
-            $author$project$Auth$supportedAssociations(discovery)
-          )
-        )
-      );
-    } else {
-      return $elm$core$Maybe$Nothing;
-    }
-  };
   var $author$project$Auth$sourceIdsForFamilyKeys = F2(
     function(familyKeys, sources) {
       return $elm$core$Set$fromList(
@@ -23310,12 +24105,32 @@
           var _v1 = A2($author$project$Auth$update, event, model.auth);
           var nextAuth = _v1.a;
           var effects = _v1.b;
+          var changedPolicies = A2(
+            $elm$core$List$filterMap,
+            function(image) {
+              var policy = A2($author$project$Auth$thumbnailCrossOrigin, image.sourceId, nextAuth);
+              return !_Utils_eq(
+                policy,
+                A2($author$project$Auth$thumbnailCrossOrigin, image.sourceId, model.auth)
+              ) ? $elm$core$Maybe$Just(
+                { crossOrigin: policy, sourceId: image.sourceId }
+              ) : $elm$core$Maybe$Nothing;
+            },
+            A2($elm$core$List$filterMap, $author$project$Model$primaryImage, model.pages)
+          );
           return _Utils_Tuple2(
             _Utils_update(
               model,
               { auth: nextAuth }
             ),
-            $author$project$Main$runAuthEffects(effects)
+            $elm$core$Platform$Cmd$batch(
+              _List_fromArray(
+                [
+                  $author$project$Main$runAuthEffects(effects),
+                  $elm$core$List$isEmpty(changedPolicies) ? $elm$core$Platform$Cmd$none : $author$project$Main$pagePreviewPoliciesUpdated(changedPolicies)
+                ]
+              )
+            )
           );
         case "ClientRequestedLayoutMode":
           var requestedMode = msg.a;
@@ -24331,48 +25146,83 @@
           } else {
             return _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
           }
-        case "ServerRespondedWithAnnotations":
-          var canvasId = msg.a;
-          var result = msg.b;
-          var nextModel = _Utils_update(
-            model,
-            {
-              annotationLoading: A2($elm$core$Set$remove, canvasId, model.annotationLoading)
-            }
-          );
-          if (result.$ === "Ok") {
-            var annotations = result.a;
-            var merged = (function(existing) {
-              return _Utils_ap(annotations, existing);
-            })(
-              A2(
-                $elm$core$Maybe$withDefault,
-                _List_Nil,
-                A2($elm$core$Dict$get, canvasId, nextModel.annotationsByCanvas)
-              )
-            );
-            return _Utils_Tuple2(
-              _Utils_update(
-                nextModel,
-                {
-                  annotationsByCanvas: A3($elm$core$Dict$insert, canvasId, merged, nextModel.annotationsByCanvas)
+        case "ViewerRequestedAnnotationPages":
+          var indexes = msg.a;
+          return A2(
+            $elm$core$Tuple$mapSecond,
+            $elm$core$Platform$Cmd$batch,
+            A3(
+              $elm$core$List$foldl,
+              F2(
+                function(index2, _v35) {
+                  var currentModel = _v35.a;
+                  var commands = _v35.b;
+                  var _v36 = A2($author$project$Model$getPageAt, index2, currentModel.pages);
+                  if (_v36.$ === "Just") {
+                    var page2 = _v36.a;
+                    var _v37 = A2($author$project$Main$requestAnnotations, page2.canvasId, currentModel);
+                    var nextModel2 = _v37.a;
+                    var command = _v37.b;
+                    return _Utils_Tuple2(
+                      nextModel2,
+                      A2($elm$core$List$cons, command, commands)
+                    );
+                  } else {
+                    return _Utils_Tuple2(currentModel, commands);
+                  }
                 }
               ),
-              $author$project$Main$annotationsUpdated(
-                {
-                  annotations: A2(
-                    $elm$core$List$map,
-                    $author$project$Annotation$encode(
-                      A2($author$project$Main$annotationImageServiceForCanvas, canvasId, nextModel)
-                    ),
-                    merged
-                  ),
-                  canvasId
-                }
-              )
-            );
+              _Utils_Tuple2(model, _List_Nil),
+              indexes
+            )
+          );
+        case "ServerRespondedWithAnnotations":
+          var generation = msg.a;
+          var canvasId = msg.b;
+          var result = msg.c;
+          if (!_Utils_eq(generation, model.annotationGeneration)) {
+            return _Utils_Tuple2(model, $elm$core$Platform$Cmd$none);
           } else {
-            return _Utils_Tuple2(nextModel, $elm$core$Platform$Cmd$none);
+            var nextModel = _Utils_update(
+              model,
+              {
+                annotationLoading: A2($elm$core$Set$remove, canvasId, model.annotationLoading)
+              }
+            );
+            if (result.$ === "Ok") {
+              var annotations = result.a;
+              var merged = (function(existing) {
+                return _Utils_ap(annotations, existing);
+              })(
+                A2(
+                  $elm$core$Maybe$withDefault,
+                  _List_Nil,
+                  A2($elm$core$Dict$get, canvasId, nextModel.annotationsByCanvas)
+                )
+              );
+              return _Utils_Tuple2(
+                _Utils_update(
+                  nextModel,
+                  {
+                    annotationsByCanvas: A3($elm$core$Dict$insert, canvasId, merged, nextModel.annotationsByCanvas)
+                  }
+                ),
+                $author$project$Main$annotationsUpdated(
+                  {
+                    annotations: A2(
+                      $elm$core$List$map,
+                      $author$project$Annotation$encodeWithBodies(
+                        A2($author$project$Main$annotationImageServiceForCanvas, canvasId, nextModel)
+                      ),
+                      merged
+                    ),
+                    canvasId
+                  }
+                )
+              );
+            } else {
+              return _Utils_Tuple2(nextModel, $elm$core$Platform$Cmd$none);
+            }
           }
         default:
           return _Utils_Tuple2(
@@ -26273,7 +27123,6 @@
       )
     );
   };
-  var $elm$core$String$trim = _String_trim;
   var $author$project$View$HtmlRenderer$isSafeUrl = function(value) {
     var normalized = $elm$core$String$toLower(
       $elm$core$String$trim(value)
@@ -27075,33 +27924,6 @@
   var $author$project$Msg$UserClickedPageViewImageChoice = function(a) {
     return { $: "UserClickedPageViewImageChoice", a };
   };
-  var $author$project$Auth$thumbnailCrossOrigin = F2(
-    function(sourceId, model) {
-      var _v0 = A2($elm$core$Dict$get, sourceId, model.sources);
-      if (_v0.$ === "Just") {
-        var source = _v0.a;
-        return $author$project$Auth$requiresAuthorization(source.auth) ? A2(
-          $elm$core$Maybe$map,
-          function(state) {
-            if (state.$ === "AnonymousFamily") {
-              return "anonymous";
-            } else {
-              return "use-credentials";
-            }
-          },
-          A2(
-            $elm$core$Maybe$andThen,
-            function(key) {
-              return A2($elm$core$Dict$get, key, model.familyStates);
-            },
-            $author$project$Auth$sourceFamilyKey(source)
-          )
-        ) : $elm$core$Maybe$Just("anonymous");
-      } else {
-        return $elm$core$Maybe$Nothing;
-      }
-    }
-  );
   var $author$project$View$PageViewModal$viewImageChoiceItem = F4(
     function(auth, selectedIndex, index, image) {
       var isActive = _Utils_eq(index, selectedIndex);
@@ -29243,33 +30065,38 @@
     );
   };
   var $author$project$View$Sidebar$viewContentsEmptyBody = $author$project$View$Sidebar$viewContentsEmpty("No contents available.");
-  var $author$project$View$Sidebar$lookupRangeIndex = F2(
-    function(rangeIndexMap, rangeId) {
+  var $author$project$RangeIndex$topLevelRanges = function(_v0) {
+    var indexes = _v0.a;
+    return indexes.topLevelRanges;
+  };
+  var $author$project$RangeIndex$containsAnyCanvas = F3(
+    function(rangeId, canvasIds, _v0) {
+      var indexes = _v0.a;
+      return (function(rangeCanvasIds) {
+        return A2(
+          $elm$core$List$any,
+          function(canvasId) {
+            return A2($elm$core$Set$member, canvasId, rangeCanvasIds);
+          },
+          canvasIds
+        );
+      })(
+        A2(
+          $elm$core$Maybe$withDefault,
+          $elm$core$Set$empty,
+          A2($elm$core$Dict$get, rangeId, indexes.canvasIdsByRange)
+        )
+      );
+    }
+  );
+  var $author$project$RangeIndex$firstPageIndex = F2(
+    function(rangeId, _v0) {
+      var indexes = _v0.a;
       return A2(
         $elm$core$Maybe$withDefault,
         $elm$core$Maybe$Nothing,
-        A2($elm$core$Dict$get, rangeId, rangeIndexMap)
+        A2($elm$core$Dict$get, rangeId, indexes.firstPageIndexes)
       );
-    }
-  );
-  var $author$project$View$Sidebar$rangeContainsCanvas = F2(
-    function(canvasId, range) {
-      return A2(
-        $elm$core$List$any,
-        $author$project$View$Sidebar$rangeItemContainsCanvas(canvasId),
-        range.items
-      );
-    }
-  );
-  var $author$project$View$Sidebar$rangeItemContainsCanvas = F2(
-    function(canvasId, item) {
-      if (item.$ === "RangeCanvas") {
-        var idValue = item.a;
-        return _Utils_eq(idValue, canvasId);
-      } else {
-        var range = item.a;
-        return A2($author$project$View$Sidebar$rangeContainsCanvas, canvasId, range);
-      }
     }
   );
   var $author$project$Msg$UserClickedRange = function(a) {
@@ -29413,6 +30240,100 @@
       );
     }
   );
+  var $author$project$View$Sidebar$viewRangeItems = F5(
+    function(language, selectedRangeId, currentCanvasIds, rangeIndexes, items) {
+      var rendered = A2(
+        $elm$core$List$filterMap,
+        function(item) {
+          if (item.$ === "RangeCanvas") {
+            return $elm$core$Maybe$Nothing;
+          } else {
+            var range = item.a;
+            return $elm$core$Maybe$Just(
+              A6($elm$html$Html$Lazy$lazy5, $author$project$View$Sidebar$viewRangeNode, language, selectedRangeId, currentCanvasIds, rangeIndexes, range)
+            );
+          }
+        },
+        items
+      );
+      return $elm$core$List$isEmpty(rendered) ? _List_Nil : _List_fromArray(
+        [
+          A2(
+            $elm$html$Html$ul,
+            _List_fromArray(
+              [
+                $elm$html$Html$Attributes$class("diva-contents-list-nested diva-list-reset")
+              ]
+            ),
+            rendered
+          )
+        ]
+      );
+    }
+  );
+  var $author$project$View$Sidebar$viewRangeNode = F5(
+    function(language, selectedRangeId, currentCanvasIds, rangeIndexes, range) {
+      var maybeIndex = A2($author$project$RangeIndex$firstPageIndex, range.id, rangeIndexes);
+      var labelText = A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, language, range.label);
+      var resolvedLabel = $elm$core$String$isEmpty(labelText) ? "[Untitled range]" : labelText;
+      var isExpanded = _Utils_eq(
+        selectedRangeId,
+        $elm$core$Maybe$Just(range.id)
+      );
+      var metadataBlock = isExpanded ? A2($author$project$View$Sidebar$viewRangeMetadata, language, range.metadata) : _List_Nil;
+      var isCurrent = A3($author$project$RangeIndex$containsAnyCanvas, range.id, currentCanvasIds, rangeIndexes);
+      var labelNode = A3($author$project$View$Sidebar$viewRangeButton, isCurrent, maybeIndex, resolvedLabel);
+      var headingNode = A2(
+        $elm$html$Html$div,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-heading")
+          ]
+        ),
+        _Utils_ap(
+          $elm$core$List$isEmpty(range.metadata) ? _List_Nil : _List_fromArray(
+            [
+              A3($author$project$View$Sidebar$viewRangeDisclosure, isExpanded, range.id, resolvedLabel)
+            ]
+          ),
+          _List_fromArray(
+            [labelNode]
+          )
+        )
+      );
+      var children = A5($author$project$View$Sidebar$viewRangeItems, language, selectedRangeId, currentCanvasIds, rangeIndexes, range.items);
+      return A2(
+        $elm$html$Html$li,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-item")
+          ]
+        ),
+        A2(
+          $elm$core$List$cons,
+          headingNode,
+          _Utils_ap(metadataBlock, children)
+        )
+      );
+    }
+  );
+  var $author$project$View$Sidebar$viewRangeList = F5(
+    function(language, selectedRangeId, currentCanvasIds, rangeIndexes, ranges) {
+      return A2(
+        $elm$html$Html$ul,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
+          ]
+        ),
+        A2(
+          $elm$core$List$map,
+          A5($elm$html$Html$Lazy$lazy5, $author$project$View$Sidebar$viewRangeNode, language, selectedRangeId, currentCanvasIds, rangeIndexes),
+          ranges
+        )
+      );
+    }
+  );
   var $author$project$Model$pageViewStartIndex = F3(
     function(viewMode, shiftByOne, index) {
       if (viewMode.$ === "OneUp") {
@@ -29462,117 +30383,15 @@
       )
     );
   };
-  var $author$project$View$Sidebar$viewRangeItems = F3(
-    function(model, rangeIndexMap, items) {
-      var rendered = A2(
-        $elm$core$List$filterMap,
-        function(item) {
-          if (item.$ === "RangeCanvas") {
-            return $elm$core$Maybe$Nothing;
-          } else {
-            var range = item.a;
-            return $elm$core$Maybe$Just(
-              A4($elm$html$Html$Lazy$lazy3, $author$project$View$Sidebar$viewRangeNode, model, rangeIndexMap, range)
-            );
-          }
-        },
-        items
-      );
-      return $elm$core$List$isEmpty(rendered) ? _List_Nil : _List_fromArray(
-        [
-          A2(
-            $elm$html$Html$ul,
-            _List_fromArray(
-              [
-                $elm$html$Html$Attributes$class("diva-contents-list-nested diva-list-reset")
-              ]
-            ),
-            rendered
-          )
-        ]
-      );
+  var $author$project$View$Sidebar$viewContentsIndexBody = function(model) {
+    var ranges = $author$project$RangeIndex$topLevelRanges(model.rangeIndexes);
+    if ($elm$core$List$isEmpty(ranges)) {
+      return $author$project$View$Sidebar$viewContentsEmptyBody;
+    } else {
+      var currentCanvasIds = $author$project$View$Sidebar$visibleCanvasIds(model);
+      return A5($author$project$View$Sidebar$viewRangeList, model.detectedLanguage, model.selectedRangeId, currentCanvasIds, model.rangeIndexes, ranges);
     }
-  );
-  var $author$project$View$Sidebar$viewRangeNode = F3(
-    function(model, rangeIndexMap, range) {
-      var maybeIndex = A2($author$project$View$Sidebar$lookupRangeIndex, rangeIndexMap, range.id);
-      var labelText = A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, model.detectedLanguage, range.label);
-      var resolvedLabel = $elm$core$String$isEmpty(labelText) ? "[Untitled range]" : labelText;
-      var isExpanded = _Utils_eq(
-        model.selectedRangeId,
-        $elm$core$Maybe$Just(range.id)
-      );
-      var metadataBlock = isExpanded ? A2($author$project$View$Sidebar$viewRangeMetadata, model.detectedLanguage, range.metadata) : _List_Nil;
-      var isCurrent = A2(
-        $elm$core$List$any,
-        function(canvasId) {
-          return A2($author$project$View$Sidebar$rangeContainsCanvas, canvasId, range);
-        },
-        $author$project$View$Sidebar$visibleCanvasIds(model)
-      );
-      var labelNode = A3($author$project$View$Sidebar$viewRangeButton, isCurrent, maybeIndex, resolvedLabel);
-      var headingNode = A2(
-        $elm$html$Html$div,
-        _List_fromArray(
-          [
-            $elm$html$Html$Attributes$class("diva-contents-heading")
-          ]
-        ),
-        _Utils_ap(
-          $elm$core$List$isEmpty(range.metadata) ? _List_Nil : _List_fromArray(
-            [
-              A3($author$project$View$Sidebar$viewRangeDisclosure, isExpanded, range.id, resolvedLabel)
-            ]
-          ),
-          _List_fromArray(
-            [labelNode]
-          )
-        )
-      );
-      var children = A3($author$project$View$Sidebar$viewRangeItems, model, rangeIndexMap, range.items);
-      return A2(
-        $elm$html$Html$li,
-        _List_fromArray(
-          [
-            $elm$html$Html$Attributes$class("diva-contents-item")
-          ]
-        ),
-        A2(
-          $elm$core$List$cons,
-          headingNode,
-          _Utils_ap(metadataBlock, children)
-        )
-      );
-    }
-  );
-  var $author$project$View$Sidebar$viewRangeList = F3(
-    function(model, rangeIndexMap, ranges) {
-      return A2(
-        $elm$html$Html$ul,
-        _List_fromArray(
-          [
-            $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
-          ]
-        ),
-        A2(
-          $elm$core$List$map,
-          A3($elm$html$Html$Lazy$lazy3, $author$project$View$Sidebar$viewRangeNode, model, rangeIndexMap),
-          ranges
-        )
-      );
-    }
-  );
-  var $author$project$View$Sidebar$viewContentsIndexBody = F2(
-    function(model, manifest) {
-      var _v0 = $rism_digital$elm_iiif$IIIF$Presentation$toRanges(manifest);
-      if (_v0.$ === "Just") {
-        var list = _v0.a;
-        return $elm$core$List$isEmpty(list) ? $author$project$View$Sidebar$viewContentsEmptyBody : A3($author$project$View$Sidebar$viewRangeList, model, model.rangeIndexMap, list);
-      } else {
-        return $author$project$View$Sidebar$viewContentsEmptyBody;
-      }
-    }
-  );
+  };
   var $author$project$Msg$UserSelectedContentsIndex = { $: "UserSelectedContentsIndex" };
   var $author$project$Msg$UserSelectedContentsPages = { $: "UserSelectedContentsPages" };
   var $author$project$View$Sidebar$viewContentsToggle = F2(
@@ -29664,119 +30483,51 @@
       )
     );
   };
-  var $author$project$View$Sidebar$rangesForCanvasInRange = F2(
-    function(canvasId, range) {
-      var nested = A2(
-        $elm$core$List$concatMap,
-        function(item) {
-          if (item.$ === "RangeCanvas") {
-            return _List_Nil;
-          } else {
-            var child = item.a;
-            return A2($author$project$View$Sidebar$rangesForCanvasInRange, canvasId, child);
-          }
-        },
-        range.items
-      );
-      return A2($author$project$View$Sidebar$rangeContainsCanvas, canvasId, range) ? A2($elm$core$List$cons, range, nested) : nested;
-    }
-  );
-  var $author$project$View$Sidebar$rangesForCanvas = F2(
-    function(canvasId, ranges) {
+  var $author$project$RangeIndex$rangesForCanvas = F2(
+    function(canvasId, _v0) {
+      var indexes = _v0.a;
       return A2(
-        $elm$core$List$concatMap,
-        $author$project$View$Sidebar$rangesForCanvasInRange(canvasId),
-        ranges
+        $elm$core$Maybe$withDefault,
+        _List_Nil,
+        A2($elm$core$Dict$get, canvasId, indexes.rangesByCanvas)
       );
     }
   );
   var $author$project$View$Sidebar$viewOnThisPageEmptyBody = $author$project$View$Sidebar$viewContentsEmpty("No ranges for this page.");
-  var $author$project$View$Sidebar$rangeCanvasIds = function(items) {
-    var step = F2(
-      function(pending, acc) {
-        step:
-          while (true) {
-            if (!pending.b) {
-              return $elm$core$List$reverse(acc);
-            } else {
-              if (!pending.a.b) {
-                var restStacks = pending.b;
-                var $temp$pending = restStacks, $temp$acc = acc;
-                pending = $temp$pending;
-                acc = $temp$acc;
-                continue step;
-              } else {
-                var _v1 = pending.a;
-                var item = _v1.a;
-                var rest = _v1.b;
-                var restStacks = pending.b;
-                if (item.$ === "RangeCanvas") {
-                  var idValue = item.a;
-                  var $temp$pending = A2($elm$core$List$cons, rest, restStacks), $temp$acc = A2($elm$core$List$cons, idValue, acc);
-                  pending = $temp$pending;
-                  acc = $temp$acc;
-                  continue step;
-                } else {
-                  var range = item.a;
-                  var $temp$pending = A2(
-                    $elm$core$List$cons,
-                    range.items,
-                    A2($elm$core$List$cons, rest, restStacks)
-                  ), $temp$acc = acc;
-                  pending = $temp$pending;
-                  acc = $temp$acc;
-                  continue step;
-                }
-              }
-            }
-          }
-      }
-    );
-    return A2(
-      step,
-      _List_fromArray(
-        [items]
-      ),
-      _List_Nil
-    );
-  };
-  var $author$project$View$Sidebar$rangeCanvasLabels = F2(
-    function(canvasLabelMap, range) {
+  var $author$project$RangeIndex$labelBounds = F2(
+    function(rangeId, _v0) {
+      var indexes = _v0.a;
       return A2(
-        $elm$core$List$filterMap,
-        function(idValue) {
-          return A2($elm$core$Dict$get, idValue, canvasLabelMap);
-        },
-        $author$project$View$Sidebar$rangeCanvasIds(range.items)
+        $elm$core$Maybe$withDefault,
+        { firstLabel: $elm$core$Maybe$Nothing, lastLabel: $elm$core$Maybe$Nothing },
+        A2($elm$core$Dict$get, rangeId, indexes.labelBoundsByRange)
       );
     }
   );
   var $author$project$View$Sidebar$viewOtpRangeItem = F3(
-    function(model, canvasLabelMap, range) {
-      var metadataBlock = A2($author$project$View$Sidebar$viewRangeMetadata, model.detectedLanguage, range.metadata);
-      var maybeIndex = A2($author$project$View$Sidebar$lookupRangeIndex, model.rangeIndexMap, range.id);
-      var labelText = A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, model.detectedLanguage, range.label);
-      var canvasLabels = A2($author$project$View$Sidebar$rangeCanvasLabels, canvasLabelMap, range);
-      var firstLabel = $elm$core$List$head(canvasLabels);
-      var lastLabel = $elm$core$List$head(
-        $elm$core$List$reverse(canvasLabels)
-      );
+    function(language, rangeIndexes, range) {
+      var metadataBlock = A2($author$project$View$Sidebar$viewRangeMetadata, language, range.metadata);
+      var maybeIndex = A2($author$project$RangeIndex$firstPageIndex, range.id, rangeIndexes);
+      var labelText = A2($rism_digital$elm_iiif$IIIF$Language$extractLabelFromLanguageMap, language, range.label);
+      var _v0 = A2($author$project$RangeIndex$labelBounds, range.id, rangeIndexes);
+      var firstLabel = _v0.firstLabel;
+      var lastLabel = _v0.lastLabel;
       var rangePrefix = (function() {
-        var _v0 = _Utils_Tuple2(firstLabel, lastLabel);
-        if (_v0.a.$ === "Just") {
-          if (_v0.b.$ === "Just") {
-            var first = _v0.a.a;
-            var last = _v0.b.a;
+        var _v1 = _Utils_Tuple2(firstLabel, lastLabel);
+        if (_v1.a.$ === "Just") {
+          if (_v1.b.$ === "Just") {
+            var first = _v1.a.a;
+            var last = _v1.b.a;
             return _Utils_eq(first, last) ? "[" + (first + "] ") : "[" + (first + ("-" + (last + "] ")));
           } else {
-            var first = _v0.a.a;
-            var _v1 = _v0.b;
+            var first = _v1.a.a;
+            var _v2 = _v1.b;
             return "[" + (first + "] ");
           }
         } else {
-          if (_v0.b.$ === "Just") {
-            var _v2 = _v0.a;
-            var last = _v0.b.a;
+          if (_v1.b.$ === "Just") {
+            var _v3 = _v1.a;
+            var last = _v1.b.a;
             return "[" + (last + "] ");
           } else {
             return "";
@@ -29796,52 +30547,28 @@
       );
     }
   );
-  var $author$project$View$Sidebar$viewOnThisPageBody = F2(
-    function(model, manifest) {
-      var _v0 = $author$project$View$Sidebar$currentCanvasId(model);
-      if (_v0.$ === "Just") {
-        var canvasId = _v0.a;
-        var _v1 = $rism_digital$elm_iiif$IIIF$Presentation$toRanges(manifest);
-        if (_v1.$ === "Just") {
-          var list = _v1.a;
-          var matches = A2($author$project$View$Sidebar$rangesForCanvas, canvasId, list);
-          if ($elm$core$List$isEmpty(matches)) {
-            return $author$project$View$Sidebar$viewOnThisPageEmptyBody;
-          } else {
-            var canvasLabelMap = $elm$core$Dict$fromList(
-              A2(
-                $elm$core$List$map,
-                function(canvas) {
-                  return _Utils_Tuple2(
-                    canvas.id,
-                    $rism_digital$elm_iiif$IIIF$Presentation$canvasLabel(canvas)
-                  );
-                },
-                $rism_digital$elm_iiif$IIIF$Presentation$toCanvases(manifest)
-              )
-            );
-            return A2(
-              $elm$html$Html$ul,
-              _List_fromArray(
-                [
-                  $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
-                ]
-              ),
-              A2(
-                $elm$core$List$map,
-                A2($author$project$View$Sidebar$viewOtpRangeItem, model, canvasLabelMap),
-                matches
-              )
-            );
-          }
-        } else {
-          return $author$project$View$Sidebar$viewOnThisPageEmptyBody;
-        }
-      } else {
-        return $author$project$View$Sidebar$viewOnThisPageEmptyBody;
-      }
+  var $author$project$View$Sidebar$viewOnThisPageBody = function(model) {
+    var _v0 = $author$project$View$Sidebar$currentCanvasId(model);
+    if (_v0.$ === "Just") {
+      var canvasId = _v0.a;
+      var matches = A2($author$project$RangeIndex$rangesForCanvas, canvasId, model.rangeIndexes);
+      return $elm$core$List$isEmpty(matches) ? $author$project$View$Sidebar$viewOnThisPageEmptyBody : A2(
+        $elm$html$Html$ul,
+        _List_fromArray(
+          [
+            $elm$html$Html$Attributes$class("diva-contents-list diva-list-reset")
+          ]
+        ),
+        A2(
+          $elm$core$List$map,
+          A2($author$project$View$Sidebar$viewOtpRangeItem, model.detectedLanguage, model.rangeIndexes),
+          matches
+        )
+      );
+    } else {
+      return $author$project$View$Sidebar$viewOnThisPageEmptyBody;
     }
-  );
+  };
   var $author$project$View$Sidebar$viewContentsContent = function(model) {
     var maybeManifest = $author$project$Model$currentManifest(model);
     var body = (function() {
@@ -29849,8 +30576,7 @@
       if (_v0.a.$ === "ContentsIndex") {
         if (_v0.b.$ === "Just") {
           var _v1 = _v0.a;
-          var manifest = _v0.b.a;
-          return A2($author$project$View$Sidebar$viewContentsIndexBody, model, manifest);
+          return $author$project$View$Sidebar$viewContentsIndexBody(model);
         } else {
           var _v2 = _v0.a;
           var _v3 = _v0.b;
@@ -29859,8 +30585,7 @@
       } else {
         if (_v0.b.$ === "Just") {
           var _v4 = _v0.a;
-          var manifest = _v0.b.a;
-          return A2($author$project$View$Sidebar$viewOnThisPageBody, model, manifest);
+          return $author$project$View$Sidebar$viewOnThisPageBody(model);
         } else {
           var _v5 = _v0.a;
           var _v6 = _v0.b;
@@ -30090,8 +30815,15 @@
       );
     }
   );
-  var $elm$virtual_dom$VirtualDom$lazy6 = _VirtualDom_lazy6;
-  var $elm$html$Html$Lazy$lazy6 = $elm$virtual_dom$VirtualDom$lazy6;
+  var $author$project$View$Sidebar$isThumbnailActive = F4(
+    function(viewMode, shiftByOne, selectedIndex, index) {
+      return A2(
+        $elm$core$List$member,
+        index,
+        A3($author$project$View$Sidebar$visiblePageIndexes, viewMode, shiftByOne, selectedIndex)
+      );
+    }
+  );
   var $elm$core$List$takeReverse = F3(
     function(n, list, kept) {
       takeReverse:
@@ -30264,45 +30996,14 @@
       );
     }
   );
-  var $author$project$Auth$Unknown = { $: "Unknown" };
   var $author$project$Msg$UserClickedThumbnail = function(a) {
     return { $: "UserClickedThumbnail", a };
   };
-  var $author$project$View$Sidebar$isThumbnailActive = F4(
-    function(viewMode, shiftByOne, selectedIndex, index) {
-      return A2(
-        $elm$core$List$member,
-        index,
-        A3($author$project$View$Sidebar$visiblePageIndexes, viewMode, shiftByOne, selectedIndex)
-      );
-    }
-  );
-  var $author$project$View$Sidebar$viewThumbnail = F6(
-    function(auth, viewMode, shiftByOne, selectedIndex, index, page) {
-      var isActive = A4($author$project$View$Sidebar$isThumbnailActive, viewMode, shiftByOne, selectedIndex, index);
-      var hasChoices = $elm$core$List$length(page.images) > 1;
-      var fallbackImage = { auth: $author$project$Auth$Unknown, id: "", isPrimary: false, isStatic: true, label: "", sourceId: "", thumbUrl: "", tileSource: "" };
-      var primary = A2(
-        $elm$core$Maybe$withDefault,
-        A2(
-          $elm$core$Maybe$withDefault,
-          fallbackImage,
-          $elm$core$List$head(page.images)
-        ),
-        $elm$core$List$head(
-          A2(
-            $elm$core$List$filter,
-            function($) {
-              return $.isPrimary;
-            },
-            page.images
-          )
-        )
-      );
+  var $author$project$View$Sidebar$viewThumbnail = F4(
+    function(isActive, crossOrigin, index, page) {
       var thumbnail = (function() {
-        var _v0 = A2($author$project$Auth$thumbnailCrossOrigin, primary.sourceId, auth);
-        if (_v0.$ === "Just") {
-          var crossOrigin = _v0.a;
+        if (crossOrigin.$ === "Just") {
+          var policy = crossOrigin.a;
           return A3(
             $elm$html$Html$node,
             "diva-lazy-image",
@@ -30316,7 +31017,7 @@
                   "data-alt",
                   "Page " + $elm$core$String$fromInt(index + 1)
                 ),
-                A2($elm$html$Html$Attributes$attribute, "data-crossorigin", crossOrigin)
+                A2($elm$html$Html$Attributes$attribute, "data-crossorigin", policy)
               ]
             ),
             _List_Nil
@@ -30334,6 +31035,7 @@
           );
         }
       })();
+      var hasChoices = $elm$core$List$length(page.images) > 1;
       var attrs = _List_fromArray(
         [
           $elm$html$Html$Attributes$classList(
@@ -30403,7 +31105,27 @@
       var viewMode = _v0.viewMode;
       var viewingDirection = _v0.viewingDirection;
       var indexedPages = A2($elm$core$List$indexedMap, $elm$core$Tuple$pair, pages);
-      var orderedPages = _Utils_eq(viewingDirection, $rism_digital$elm_iiif$IIIF$Presentation$RightToLeft) ? A2($author$project$View$Sidebar$reverseInRows, 3, indexedPages) : indexedPages;
+      var thumbnailInputs = A2(
+        $elm$core$List$map,
+        function(_v2) {
+          var index = _v2.a;
+          var page = _v2.b;
+          return {
+            crossOrigin: A2(
+              $elm$core$Maybe$andThen,
+              function(image) {
+                return A2($author$project$Auth$thumbnailCrossOrigin, image.sourceId, auth);
+              },
+              $author$project$Model$primaryImage(page)
+            ),
+            index,
+            isActive: A4($author$project$View$Sidebar$isThumbnailActive, viewMode, shiftByOne, selectedIndex, index),
+            page
+          };
+        },
+        indexedPages
+      );
+      var orderedPages = _Utils_eq(viewingDirection, $rism_digital$elm_iiif$IIIF$Presentation$RightToLeft) ? A2($author$project$View$Sidebar$reverseInRows, 3, thumbnailInputs) : thumbnailInputs;
       return A2(
         $elm$html$Html$div,
         _List_fromArray(
@@ -30427,9 +31149,11 @@
         A2(
           $elm$core$List$map,
           function(_v1) {
-            var index = _v1.a;
-            var page = _v1.b;
-            return A7($elm$html$Html$Lazy$lazy6, $author$project$View$Sidebar$viewThumbnail, auth, viewMode, shiftByOne, selectedIndex, index, page);
+            var isActive = _v1.isActive;
+            var crossOrigin = _v1.crossOrigin;
+            var index = _v1.index;
+            var page = _v1.page;
+            return A5($elm$html$Html$Lazy$lazy4, $author$project$View$Sidebar$viewThumbnail, isActive, crossOrigin, index, page);
           },
           orderedPages
         )
@@ -30770,6 +31494,9 @@
       );
     }
   );
+  var $author$project$View$Icons$logout = $author$project$View$Icons$makeSvgIcon(
+    { path: "M336 352c97.2 0 176-78.8 176-176S433.2 0 336 0S160 78.8 160 176c0 18.7 2.9 36.8 8.3 53.7L7 391c-4.5 4.5-7 10.6-7 17v80c0 13.3 10.7 24 24 24h80c13.3 0 24-10.7 24-24V448h40c13.3 0 24-10.7 24-24V384h40c6.4 0 12.5-2.5 17-7l33.3-33.3c16.9 5.4 35 8.3 53.7 8.3zM376 96a40 40 0 1 1 0 80 40 40 0 1 1 0-80z", viewBox: "0 0 512 512" }
+  );
   var $author$project$Auth$logoutActions = function(model) {
     return A2(
       $elm$core$List$map,
@@ -30822,14 +31549,14 @@
                   ]
                 ),
                 _List_fromArray(
-                  [$author$project$View$Icons$shiftRight]
+                  [$author$project$View$Icons$logout]
                 )
               )
             ]
           )
         );
       },
-      $author$project$Auth$logoutActions(model.auth)
+      model.showLogoutButton ? $author$project$Auth$logoutActions(model.auth) : _List_Nil
     );
   };
   var $author$project$View$Icons$zoomIn = $author$project$View$Icons$makeSvgIcon(
@@ -31197,63 +31924,69 @@
                       function(showSidebar) {
                         return A2(
                           $elm$json$Json$Decode$andThen,
-                          function(rootElementId) {
+                          function(showLogoutButton) {
                             return A2(
                               $elm$json$Json$Decode$andThen,
-                              function(objectData) {
+                              function(rootElementId) {
                                 return A2(
                                   $elm$json$Json$Decode$andThen,
-                                  function(initialPage) {
+                                  function(objectData) {
                                     return A2(
                                       $elm$json$Json$Decode$andThen,
-                                      function(enableAnnotations) {
+                                      function(initialPage) {
                                         return A2(
                                           $elm$json$Json$Decode$andThen,
-                                          function(enableAnnotationSelection) {
+                                          function(enableAnnotations) {
                                             return A2(
                                               $elm$json$Json$Decode$andThen,
-                                              function(annotationServer) {
+                                              function(enableAnnotationSelection) {
                                                 return A2(
                                                   $elm$json$Json$Decode$andThen,
-                                                  function(acceptHeaders) {
-                                                    return $elm$json$Json$Decode$succeed(
-                                                      { acceptHeaders, annotationServer, enableAnnotationSelection, enableAnnotations, initialPage, objectData, rootElementId, showSidebar, showTitle, sidebarPanel, sidebarWidth, userLanguage }
+                                                  function(annotationServer) {
+                                                    return A2(
+                                                      $elm$json$Json$Decode$andThen,
+                                                      function(acceptHeaders) {
+                                                        return $elm$json$Json$Decode$succeed(
+                                                          { acceptHeaders, annotationServer, enableAnnotationSelection, enableAnnotations, initialPage, objectData, rootElementId, showLogoutButton, showSidebar, showTitle, sidebarPanel, sidebarWidth, userLanguage }
+                                                        );
+                                                      },
+                                                      A2(
+                                                        $elm$json$Json$Decode$field,
+                                                        "acceptHeaders",
+                                                        $elm$json$Json$Decode$list($elm$json$Json$Decode$string)
+                                                      )
                                                     );
                                                   },
                                                   A2(
                                                     $elm$json$Json$Decode$field,
-                                                    "acceptHeaders",
-                                                    $elm$json$Json$Decode$list($elm$json$Json$Decode$string)
+                                                    "annotationServer",
+                                                    $elm$json$Json$Decode$oneOf(
+                                                      _List_fromArray(
+                                                        [
+                                                          $elm$json$Json$Decode$null($elm$core$Maybe$Nothing),
+                                                          A2($elm$json$Json$Decode$map, $elm$core$Maybe$Just, $elm$json$Json$Decode$string)
+                                                        ]
+                                                      )
+                                                    )
                                                   )
                                                 );
                                               },
-                                              A2(
-                                                $elm$json$Json$Decode$field,
-                                                "annotationServer",
-                                                $elm$json$Json$Decode$oneOf(
-                                                  _List_fromArray(
-                                                    [
-                                                      $elm$json$Json$Decode$null($elm$core$Maybe$Nothing),
-                                                      A2($elm$json$Json$Decode$map, $elm$core$Maybe$Just, $elm$json$Json$Decode$string)
-                                                    ]
-                                                  )
-                                                )
-                                              )
+                                              A2($elm$json$Json$Decode$field, "enableAnnotationSelection", $elm$json$Json$Decode$bool)
                                             );
                                           },
-                                          A2($elm$json$Json$Decode$field, "enableAnnotationSelection", $elm$json$Json$Decode$bool)
+                                          A2($elm$json$Json$Decode$field, "enableAnnotations", $elm$json$Json$Decode$bool)
                                         );
                                       },
-                                      A2($elm$json$Json$Decode$field, "enableAnnotations", $elm$json$Json$Decode$bool)
+                                      A2($elm$json$Json$Decode$field, "initialPage", $elm$json$Json$Decode$value)
                                     );
                                   },
-                                  A2($elm$json$Json$Decode$field, "initialPage", $elm$json$Json$Decode$value)
+                                  A2($elm$json$Json$Decode$field, "objectData", $elm$json$Json$Decode$string)
                                 );
                               },
-                              A2($elm$json$Json$Decode$field, "objectData", $elm$json$Json$Decode$string)
+                              A2($elm$json$Json$Decode$field, "rootElementId", $elm$json$Json$Decode$string)
                             );
                           },
-                          A2($elm$json$Json$Decode$field, "rootElementId", $elm$json$Json$Decode$string)
+                          A2($elm$json$Json$Decode$field, "showLogoutButton", $elm$json$Json$Decode$bool)
                         );
                       },
                       A2($elm$json$Json$Decode$field, "showSidebar", $elm$json$Json$Decode$bool)
@@ -31270,7 +32003,7 @@
       },
       A2($elm$json$Json$Decode$field, "userLanguage", $elm$json$Json$Decode$string)
     )
-  )({ "versions": { "elm": "0.19.1" }, "types": { "message": "Msg.Msg", "aliases": { "IIIF.Annotation.Annotation": { "args": [], "type": "{ id : String.String, target : IIIF.Annotation.AnnotationTarget, body : IIIF.Annotation.AnnotationBody, motivation : Maybe.Maybe String.String }" }, "IIIF.Annotation.AnnotationBody": { "args": [], "type": "{ value : String.String, format : Maybe.Maybe String.String, language : Maybe.Maybe String.String }" }, "IIIF.Annotation.AnnotationTarget": { "args": [], "type": "{ source : Maybe.Maybe String.String, selector : IIIF.Annotation.AnnotationSelector }" }, "IIIF.Presentation.Canvas": { "args": [], "type": "{ id : String.String, label : Maybe.Maybe IIIF.Language.LanguageMap, width : Maybe.Maybe Basics.Int, height : Maybe.Maybe Basics.Int, images : List.List IIIF.Presentation.Image, thumbnail : Maybe.Maybe IIIF.Presentation.Image, viewingLayout : Maybe.Maybe IIIF.Presentation.ViewingLayout, annotationSources : List.List IIIF.Presentation.AnnotationSource }" }, "IIIF.Presentation.HomePage": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.Image": { "args": [], "type": "{ id : IIIF.Image.ImageUri, label : Maybe.Maybe IIIF.Language.LanguageMap, imageType : IIIF.Presentation.ImageType, service : List.List IIIF.Presentation.ServiceTypes, serviceObjects : List.List Json.Decode.Value }" }, "IIIF.Language.LabelValue": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Language.LanguageMap": { "args": [], "type": "List.List IIIF.Language.LanguageValues" }, "IIIF.Presentation.Logo": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes, width : Basics.Int, height : Basics.Int, service : Maybe.Maybe (List.List IIIF.Presentation.ServiceObject) }" }, "IIIF.Presentation.Manifest": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, metadata : List.List IIIF.Language.LabelValue, viewingDirection : IIIF.Presentation.ViewingDirection, summary : Maybe.Maybe IIIF.Language.LanguageMap, viewingLayout : IIIF.Presentation.ViewingLayout, canvases : List.List IIIF.Presentation.Canvas, ranges : Maybe.Maybe (List.List IIIF.Presentation.Range), homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe IIIF.Presentation.Image, provider : Maybe.Maybe (List.List IIIF.Presentation.Provider), thumbnail : Maybe.Maybe IIIF.Presentation.Image, requiredStatement : Maybe.Maybe IIIF.Presentation.RequiredStatement }" }, "IIIF.Presentation.Provider": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, type_ : IIIF.Presentation.ResourceTypes, homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe (List.List IIIF.Presentation.Logo), seeAlso : Maybe.Maybe (List.List IIIF.Presentation.SeeAlso) }" }, "IIIF.Presentation.Range": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.RangeItem, metadata : List.List IIIF.Language.LabelValue }" }, "IIIF.Presentation.RequiredStatement": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Presentation.SeeAlso": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.ServiceObject": { "args": [], "type": "{ id : String.String, serviceType : IIIF.Presentation.ServiceTypes }" }, "Json.Decode.Value": { "args": [], "type": "Json.Encode.Value" }, "IIIF.Presentation.Collection": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, summary : Maybe.Maybe IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.CollectionItem }" }, "IIIF.Image.ImageRequestParameters": { "args": [], "type": "{ host : String.String, prefix : String.String, region : IIIF.Image.ImageRegion, size : IIIF.Image.ImageSize, rotation : IIIF.Image.ImageRotation, quality : IIIF.Image.ImageQuality, format : IIIF.Image.ImageFormat }" }, "IIIF.Image.ImageServerParameters": { "args": [], "type": "{ host : String.String, prefix : String.String }" } }, "unions": { "Msg.Msg": { "args": [], "tags": { "AuthEvent": ["Auth.Event"], "ClientRequestedLayoutMode": ["String.String"], "ClientRequestedResource": ["String.String", "String.String"], "ClientNotifiedFullscreenChanged": ["Basics.Bool"], "ClientNotifiedPageChanged": ["Basics.Int"], "ClientNotifiedPageChangedInstant": ["Basics.Int"], "ClientNotifiedScrollThumbs": [], "ServerRespondedWithCollectionItem": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithManifestFromCollection": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFManifest"], "ServerRespondedWithResource": ["Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithRequestedResource": ["String.String", "String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "UserAppliedFilterJson": [], "UserChangedZoomLevel": ["Basics.Float"], "UserClickedCloseManifestInfo": [], "UserClickedClosePageView": [], "UserClickedCollectionItem": ["String.String"], "UserClickedManifestItem": ["String.String", "String.String"], "UserClickedOpenManifestInfo": [], "UserClickedOpenPageView": [], "UserClickedPageViewImageChoice": ["Basics.Int"], "UserClickedPageViewNext": [], "UserClickedPageViewPrev": [], "UserClickedRange": ["Maybe.Maybe Basics.Int"], "UserClickedSaveFilteredImage": [], "UserClickedThumbnail": ["Basics.Int"], "UserClickedZoomIn": [], "UserClickedZoomOut": [], "UserCopiedFilterJson": [], "UserDraggedCollectionSidebarResize": ["Basics.Int"], "UserDraggedSidebarResize": ["Basics.Int"], "UserEndedCollectionSidebarResize": [], "UserEndedSidebarResize": [], "UserResetAllFilters": [], "UserResetAltColourAdjust": [], "UserSelectedContentsIndex": [], "UserSelectedContentsPages": [], "UserStartedCollectionSidebarResize": ["Basics.Int"], "UserStartedSidebarResize": ["Basics.Int"], "UserToggledContents": [], "UserToggledCollectionSidebar": [], "UserToggledFilter": ["Filters.FilterToggle", "Basics.Bool"], "UserToggledFilterGroup": ["String.String"], "UserToggledFullscreen": [], "UserToggledMetadata": [], "UserToggledPageViewFullscreen": [], "UserToggledPageViewSidebar": [], "UserToggledRangeMetadata": ["String.String"], "UserToggledShiftByOne": [], "UserToggledSidebar": [], "UserToggledThumbnails": [], "UserToggledTwoUp": [], "UserUpdatedFilterFloat": ["Filters.FilterFloatValue", "String.String"], "UserUpdatedFilterInt": ["Filters.FilterIntValue", "String.String"], "UserUpdatedFilterJsonInput": ["String.String"], "UserUpdatedFilterString": ["Filters.FilterStringValue", "String.String"], "ViewerLoadingChanged": ["Basics.Bool"], "ViewportChanged": ["Basics.Int"], "ViewerLoadedPage": ["Basics.Int"], "ServerRespondedWithAnnotations": ["String.String", "Result.Result Http.Error (List.List IIIF.Annotation.Annotation)"], "UserToggledAnnotations": [] } }, "IIIF.Annotation.AnnotationSelector": { "args": [], "tags": { "Rectangle": ["Basics.Float", "Basics.Float", "Basics.Float", "Basics.Float"], "Svg": ["String.String"] } }, "Basics.Bool": { "args": [], "tags": { "True": [], "False": [] } }, "Http.Error": { "args": [], "tags": { "BadUrl": ["String.String"], "Timeout": [], "NetworkError": [], "BadStatus": ["Basics.Int"], "BadBody": ["String.String"] } }, "Auth.Event": { "args": [], "tags": { "Resolve": ["String.String", "String.String"], "Cancel": ["String.String"], "HttpSucceeded": ["String.String", "Basics.Int", "String.String"], "HttpFailed": ["String.String", "String.String"], "StorageRead": ["String.String", "Basics.Float", "Maybe.Maybe Json.Decode.Value"], "PopupOpened": ["String.String"], "PopupBlocked": ["String.String"], "PopupClosed": ["String.String"], "TokenMessage": ["String.String", "Basics.Float", "Json.Decode.Value"], "TokenFailed": ["String.String", "String.String"], "LogoutOpened": ["String.String"], "LogoutBlocked": ["String.String"], "LogoutClosed": [], "UserCancelled": [], "Destroyed": [] } }, "Filters.FilterFloatValue": { "args": [], "tags": { "FloatColourReplaceBlend": [], "FloatContrast": [], "FloatGamma": [], "FloatNormalizeStrength": [], "FloatPseudoColourBlue": [], "FloatPseudoColourGreen": [], "FloatPseudoColourRed": [], "FloatUnsharpAmount": [] } }, "Filters.FilterIntValue": { "args": [], "tags": { "IntAdaptiveOffset": [], "IntAdaptiveWindow": [], "IntAltRedGamma": [], "IntAltRedSigmoid": [], "IntAltRedVibrance": [], "IntAltRedHue": [], "IntAltRedHueWindow": [], "IntAltGreenGamma": [], "IntAltGreenSigmoid": [], "IntAltGreenHue": [], "IntAltGreenHueWindow": [], "IntAltGreenVibrance": [], "IntAltBlueGamma": [], "IntAltBlueSigmoid": [], "IntAltBlueHue": [], "IntAltBlueHueWindow": [], "IntAltBlueVibrance": [], "IntBrightness": [], "IntCcBlue": [], "IntCcGreen": [], "IntCcRed": [], "IntColourmapCenter": [], "IntColourReplaceTolerance": [], "IntPcaHue": [], "IntHue": [], "IntMorphKernel": [], "IntRotation": [], "IntSaturation": [], "IntThreshold": [], "IntVibrance": [] } }, "Filters.FilterStringValue": { "args": [], "tags": { "StringColourmapPreset": [], "StringColourReplaceSource": [], "StringColourReplaceTarget": [], "StringConvolutionPreset": [], "StringPcaMode": [], "StringMorphOperation": [], "StringPseudoColourMode": [] } }, "Filters.FilterToggle": { "args": [], "tags": { "ToggleAdaptive": [], "ToggleAltBlueGamma": [], "ToggleAltBlueHue": [], "ToggleAltBlueSigmoid": [], "ToggleAltBlueVibrance": [], "ToggleAltGreenGamma": [], "ToggleAltGreenHue": [], "ToggleAltGreenSigmoid": [], "ToggleAltGreenVibrance": [], "ToggleAltRedGamma": [], "ToggleAltRedHue": [], "ToggleAltRedSigmoid": [], "ToggleAltRedVibrance": [], "ToggleBrightness": [], "ToggleCcBlue": [], "ToggleCcGreen": [], "ToggleCcRed": [], "ToggleColourmap": [], "ToggleColourReplace": [], "ToggleColourReplacePreserveLum": [], "ToggleContrast": [], "ToggleConvolution": [], "ToggleFlip": [], "ToggleGamma": [], "ToggleGlobalPca": [], "ToggleGrayscale": [], "ToggleHue": [], "ToggleInvert": [], "ToggleMorph": [], "ToggleNormalize": [], "TogglePseudoColour": [], "ToggleSaturation": [], "ToggleThreshold": [], "ToggleUnsharp": [], "ToggleVibrance": [] } }, "Basics.Float": { "args": [], "tags": { "Float": [] } }, "IIIF.Presentation.IIIFManifest": { "args": [], "tags": { "IIIFManifest": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Manifest"] } }, "IIIF.Presentation.IIIFResource": { "args": [], "tags": { "ResourceManifest": ["IIIF.Presentation.IIIFManifest"], "ResourceCollection": ["IIIF.Presentation.IIIFCollection"], "ResourceCanvas": ["IIIF.Presentation.IIIFCanvas"], "ResourceRange": ["IIIF.Presentation.IIIFRange"] } }, "Basics.Int": { "args": [], "tags": { "Int": [] } }, "List.List": { "args": ["a"], "tags": {} }, "Maybe.Maybe": { "args": ["a"], "tags": { "Just": ["a"], "Nothing": [] } }, "Result.Result": { "args": ["error", "value"], "tags": { "Ok": ["value"], "Err": ["error"] } }, "String.String": { "args": [], "tags": { "String": [] } }, "IIIF.Presentation.AnnotationSource": { "args": [], "tags": { "AnnotationSourceUrl": ["String.String"], "InlineAnnotationPage": ["Json.Decode.Value"] } }, "IIIF.Presentation.IIIFCanvas": { "args": [], "tags": { "IIIFCanvas": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Canvas"] } }, "IIIF.Presentation.IIIFCollection": { "args": [], "tags": { "IIIFCollection": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Collection"] } }, "IIIF.Presentation.IIIFRange": { "args": [], "tags": { "IIIFRange": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Range"] } }, "IIIF.Version.IIIFVersion": { "args": [], "tags": { "IIIFV1": [], "IIIFV2": [], "IIIFV3": [] } }, "IIIF.Presentation.ImageType": { "args": [], "tags": { "PrimaryImage": [], "ChoiceImage": [] } }, "IIIF.Image.ImageUri": { "args": [], "tags": { "InfoUri": ["IIIF.Image.ImageServerParameters"], "ImageUri": ["IIIF.Image.ImageRequestParameters"], "StaticImageUri": ["IIIF.Image.ImageServerParameters"] } }, "IIIF.Language.LanguageValues": { "args": [], "tags": { "LanguageValues": ["IIIF.Language.Language", "List.List String.String"] } }, "IIIF.Presentation.MediaFormats": { "args": [], "tags": { "ImageJpeg": [], "OtherFormat": ["String.String"] } }, "IIIF.Presentation.RangeItem": { "args": [], "tags": { "RangeCanvas": ["String.String"], "RangeRange": ["IIIF.Presentation.Range"] } }, "IIIF.Presentation.ResourceTypes": { "args": [], "tags": { "Video": [], "OtherResource": ["String.String"] } }, "IIIF.Presentation.ServiceTypes": { "args": [], "tags": { "ImageService1": [], "ImageService2": [], "ImageService3": [], "SearchService1": [], "AutoCompleteService1": [], "AuthTokenService1": [], "AuthLogoutService1": [], "UnknownService": [] } }, "Json.Encode.Value": { "args": [], "tags": { "Value": [] } }, "IIIF.Presentation.ViewingDirection": { "args": [], "tags": { "LeftToRight": [], "RightToLeft": [], "TopToBottom": [], "BottomToTop": [] } }, "IIIF.Presentation.ViewingLayout": { "args": [], "tags": { "LayoutV2": ["IIIF.Presentation.ViewingHint"], "LayoutV3": ["List.List IIIF.Presentation.Behavior"] } }, "IIIF.Presentation.Behavior": { "args": [], "tags": { "AutoAdvanceBehavior": [], "NoAutoAdvanceBehavior": [], "RepeatBehavior": [], "NoRepeatBehavior": [], "UnorderedBehavior": [], "IndividualsBehavior": [], "ContinuousBehavior": [], "PagedBehavior": [], "FacingPagesBehavior": [], "NonPagedBehavior": [], "MultiPartBehavior": [], "TogetherBehavior": [], "SequenceBehavior": [], "ThumbnailNavBehavior": [], "NoNavBehavior": [], "HiddenBehavior": [] } }, "IIIF.Presentation.CollectionItem": { "args": [], "tags": { "NestedCollection": ["IIIF.Presentation.Collection"], "ManifestItem": ["IIIF.Presentation.Manifest"] } }, "IIIF.Image.ImageFormat": { "args": [], "tags": { "JpegFormat": [], "TiffFormat": [], "PngFormat": [], "Jp2Format": [], "GifFormat": [], "PdfFormat": [], "WebpFormat": [] } }, "IIIF.Image.ImageQuality": { "args": [], "tags": { "ColorQuality": [], "GrayQuality": [], "BiTonalQuality": [], "DefaultQuality": [], "NativeQuality": [] } }, "IIIF.Image.ImageRegion": { "args": [], "tags": { "FullRegion": [], "SquareRegion": [], "SizeRegion": ["{ x : Basics.Int, y : Basics.Int, w : Basics.Int, h : Basics.Int }"], "PctSizeRegion": ["{ x : Basics.Float, y : Basics.Float, w : Basics.Float, h : Basics.Float }"] } }, "IIIF.Image.ImageRotation": { "args": [], "tags": { "NormalRotation": ["Basics.Float"], "MirroredRotation": ["Basics.Float"] } }, "IIIF.Image.ImageSize": { "args": [], "tags": { "MaxSize": [], "ExactMaxSize": [], "WidthOnlySize": ["Basics.Int"], "ExactWidthOnlySize": ["Basics.Int"], "HeightOnlySize": ["Basics.Int"], "ExactHeightOnlySize": ["Basics.Int"], "PercentSize": ["Basics.Float"], "ExactPercentSize": ["Basics.Float"], "WidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"] } }, "IIIF.Language.Language": { "args": [], "tags": { "LanguageCode": ["String.String"], "None": [], "Default": [] } }, "IIIF.Presentation.ViewingHint": { "args": [], "tags": { "PagedHint": [], "IndividualsHint": [], "ContinuousHint": [], "MultiPartHint": [], "NonPagedHint": [], "TopHint": [], "FacingPagesHint": [] } } } } }) } };
+  )({ "versions": { "elm": "0.19.1" }, "types": { "message": "Msg.Msg", "aliases": { "IIIF.Annotation.Annotation": { "args": [], "type": "{ id : String.String, target : IIIF.Annotation.AnnotationTarget, body : IIIF.Annotation.AnnotationBody, motivation : Maybe.Maybe String.String }" }, "IIIF.Annotation.AnnotationBody": { "args": [], "type": "{ value : String.String, format : Maybe.Maybe String.String, language : Maybe.Maybe String.String }" }, "IIIF.Annotation.AnnotationTarget": { "args": [], "type": "{ source : Maybe.Maybe String.String, selector : IIIF.Annotation.AnnotationSelector }" }, "Annotation.WithBodies": { "args": [], "type": "{ annotation : IIIF.Annotation.Annotation, bodies : List.List IIIF.Annotation.AnnotationBody }" }, "IIIF.Presentation.Canvas": { "args": [], "type": "{ id : String.String, label : Maybe.Maybe IIIF.Language.LanguageMap, width : Maybe.Maybe Basics.Int, height : Maybe.Maybe Basics.Int, images : List.List IIIF.Presentation.Image, thumbnail : Maybe.Maybe IIIF.Presentation.Image, viewingLayout : Maybe.Maybe IIIF.Presentation.ViewingLayout, annotationSources : List.List IIIF.Presentation.AnnotationSource }" }, "IIIF.Presentation.HomePage": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.Image": { "args": [], "type": "{ id : IIIF.Image.ImageUri, label : Maybe.Maybe IIIF.Language.LanguageMap, imageType : IIIF.Presentation.ImageType, service : List.List IIIF.Presentation.ServiceTypes, serviceObjects : List.List Json.Decode.Value }" }, "IIIF.Language.LabelValue": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Language.LanguageMap": { "args": [], "type": "List.List IIIF.Language.LanguageValues" }, "IIIF.Presentation.Logo": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes, width : Basics.Int, height : Basics.Int, service : Maybe.Maybe (List.List IIIF.Presentation.ServiceObject) }" }, "IIIF.Presentation.Manifest": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, metadata : List.List IIIF.Language.LabelValue, viewingDirection : IIIF.Presentation.ViewingDirection, summary : Maybe.Maybe IIIF.Language.LanguageMap, viewingLayout : IIIF.Presentation.ViewingLayout, canvases : List.List IIIF.Presentation.Canvas, ranges : Maybe.Maybe (List.List IIIF.Presentation.Range), homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe IIIF.Presentation.Image, provider : Maybe.Maybe (List.List IIIF.Presentation.Provider), thumbnail : Maybe.Maybe IIIF.Presentation.Image, requiredStatement : Maybe.Maybe IIIF.Presentation.RequiredStatement }" }, "IIIF.Presentation.Provider": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, type_ : IIIF.Presentation.ResourceTypes, homepage : Maybe.Maybe (List.List IIIF.Presentation.HomePage), logo : Maybe.Maybe (List.List IIIF.Presentation.Logo), seeAlso : Maybe.Maybe (List.List IIIF.Presentation.SeeAlso) }" }, "IIIF.Presentation.Range": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.RangeItem, metadata : List.List IIIF.Language.LabelValue }" }, "IIIF.Presentation.RequiredStatement": { "args": [], "type": "{ label : IIIF.Language.LanguageMap, value : IIIF.Language.LanguageMap }" }, "IIIF.Presentation.SeeAlso": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, format : IIIF.Presentation.MediaFormats, type_ : IIIF.Presentation.ResourceTypes }" }, "IIIF.Presentation.ServiceObject": { "args": [], "type": "{ id : String.String, serviceType : IIIF.Presentation.ServiceTypes }" }, "Json.Decode.Value": { "args": [], "type": "Json.Encode.Value" }, "IIIF.Presentation.Collection": { "args": [], "type": "{ id : String.String, label : IIIF.Language.LanguageMap, summary : Maybe.Maybe IIIF.Language.LanguageMap, items : List.List IIIF.Presentation.CollectionItem }" }, "IIIF.Image.ImageRequestParameters": { "args": [], "type": "{ host : String.String, prefix : String.String, region : IIIF.Image.ImageRegion, size : IIIF.Image.ImageSize, rotation : IIIF.Image.ImageRotation, quality : IIIF.Image.ImageQuality, format : IIIF.Image.ImageFormat }" }, "IIIF.Image.ImageServerParameters": { "args": [], "type": "{ host : String.String, prefix : String.String }" } }, "unions": { "Msg.Msg": { "args": [], "tags": { "AuthEvent": ["Auth.Event"], "ClientRequestedLayoutMode": ["String.String"], "ClientRequestedResource": ["String.String", "String.String"], "ClientNotifiedFullscreenChanged": ["Basics.Bool"], "ClientNotifiedPageChanged": ["Basics.Int"], "ClientNotifiedPageChangedInstant": ["Basics.Int"], "ClientNotifiedScrollThumbs": [], "ServerRespondedWithCollectionItem": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithManifestFromCollection": ["String.String", "Result.Result Http.Error IIIF.Presentation.IIIFManifest"], "ServerRespondedWithResource": ["Result.Result Http.Error IIIF.Presentation.IIIFResource"], "ServerRespondedWithRequestedResource": ["String.String", "String.String", "Result.Result Http.Error IIIF.Presentation.IIIFResource"], "UserAppliedFilterJson": [], "UserChangedZoomLevel": ["Basics.Float"], "UserClickedCloseManifestInfo": [], "UserClickedClosePageView": [], "UserClickedCollectionItem": ["String.String"], "UserClickedManifestItem": ["String.String", "String.String"], "UserClickedOpenManifestInfo": [], "UserClickedOpenPageView": [], "UserClickedPageViewImageChoice": ["Basics.Int"], "UserClickedPageViewNext": [], "UserClickedPageViewPrev": [], "UserClickedRange": ["Maybe.Maybe Basics.Int"], "UserClickedSaveFilteredImage": [], "UserClickedThumbnail": ["Basics.Int"], "UserClickedZoomIn": [], "UserClickedZoomOut": [], "UserCopiedFilterJson": [], "UserDraggedCollectionSidebarResize": ["Basics.Int"], "UserDraggedSidebarResize": ["Basics.Int"], "UserEndedCollectionSidebarResize": [], "UserEndedSidebarResize": [], "UserResetAllFilters": [], "UserResetAltColourAdjust": [], "UserSelectedContentsIndex": [], "UserSelectedContentsPages": [], "UserStartedCollectionSidebarResize": ["Basics.Int"], "UserStartedSidebarResize": ["Basics.Int"], "UserToggledContents": [], "UserToggledCollectionSidebar": [], "UserToggledFilter": ["Filters.FilterToggle", "Basics.Bool"], "UserToggledFilterGroup": ["String.String"], "UserToggledFullscreen": [], "UserToggledMetadata": [], "UserToggledPageViewFullscreen": [], "UserToggledPageViewSidebar": [], "UserToggledRangeMetadata": ["String.String"], "UserToggledShiftByOne": [], "UserToggledSidebar": [], "UserToggledThumbnails": [], "UserToggledTwoUp": [], "UserUpdatedFilterFloat": ["Filters.FilterFloatValue", "String.String"], "UserUpdatedFilterInt": ["Filters.FilterIntValue", "String.String"], "UserUpdatedFilterJsonInput": ["String.String"], "UserUpdatedFilterString": ["Filters.FilterStringValue", "String.String"], "ViewerLoadingChanged": ["Basics.Bool"], "ViewportChanged": ["Basics.Int"], "ViewerLoadedPage": ["Basics.Int"], "ViewerRequestedAnnotationPages": ["List.List Basics.Int"], "ServerRespondedWithAnnotations": ["Basics.Int", "String.String", "Result.Result Http.Error (List.List Annotation.WithBodies)"], "UserToggledAnnotations": [] } }, "IIIF.Annotation.AnnotationSelector": { "args": [], "tags": { "Rectangle": ["Basics.Float", "Basics.Float", "Basics.Float", "Basics.Float"], "Svg": ["String.String"] } }, "Basics.Bool": { "args": [], "tags": { "True": [], "False": [] } }, "Http.Error": { "args": [], "tags": { "BadUrl": ["String.String"], "Timeout": [], "NetworkError": [], "BadStatus": ["Basics.Int"], "BadBody": ["String.String"] } }, "Auth.Event": { "args": [], "tags": { "Resolve": ["String.String", "String.String"], "Cancel": ["String.String"], "HttpSucceeded": ["String.String", "Basics.Int", "String.String"], "HttpFailed": ["String.String", "String.String"], "StorageRead": ["String.String", "Basics.Float", "Maybe.Maybe Json.Decode.Value"], "PopupOpened": ["String.String"], "PopupBlocked": ["String.String"], "PopupClosed": ["String.String"], "TokenMessage": ["String.String", "Basics.Float", "Json.Decode.Value"], "TokenFailed": ["String.String", "String.String"], "LogoutOpened": ["String.String"], "LogoutBlocked": ["String.String"], "LogoutClosed": [], "UserCancelled": [], "Destroyed": [] } }, "Filters.FilterFloatValue": { "args": [], "tags": { "FloatColourReplaceBlend": [], "FloatContrast": [], "FloatGamma": [], "FloatNormalizeStrength": [], "FloatPseudoColourBlue": [], "FloatPseudoColourGreen": [], "FloatPseudoColourRed": [], "FloatUnsharpAmount": [] } }, "Filters.FilterIntValue": { "args": [], "tags": { "IntAdaptiveOffset": [], "IntAdaptiveWindow": [], "IntAltRedGamma": [], "IntAltRedSigmoid": [], "IntAltRedVibrance": [], "IntAltRedHue": [], "IntAltRedHueWindow": [], "IntAltGreenGamma": [], "IntAltGreenSigmoid": [], "IntAltGreenHue": [], "IntAltGreenHueWindow": [], "IntAltGreenVibrance": [], "IntAltBlueGamma": [], "IntAltBlueSigmoid": [], "IntAltBlueHue": [], "IntAltBlueHueWindow": [], "IntAltBlueVibrance": [], "IntBrightness": [], "IntCcBlue": [], "IntCcGreen": [], "IntCcRed": [], "IntColourmapCenter": [], "IntColourReplaceTolerance": [], "IntPcaHue": [], "IntHue": [], "IntMorphKernel": [], "IntRotation": [], "IntSaturation": [], "IntThreshold": [], "IntVibrance": [] } }, "Filters.FilterStringValue": { "args": [], "tags": { "StringColourmapPreset": [], "StringColourReplaceSource": [], "StringColourReplaceTarget": [], "StringConvolutionPreset": [], "StringPcaMode": [], "StringMorphOperation": [], "StringPseudoColourMode": [] } }, "Filters.FilterToggle": { "args": [], "tags": { "ToggleAdaptive": [], "ToggleAltBlueGamma": [], "ToggleAltBlueHue": [], "ToggleAltBlueSigmoid": [], "ToggleAltBlueVibrance": [], "ToggleAltGreenGamma": [], "ToggleAltGreenHue": [], "ToggleAltGreenSigmoid": [], "ToggleAltGreenVibrance": [], "ToggleAltRedGamma": [], "ToggleAltRedHue": [], "ToggleAltRedSigmoid": [], "ToggleAltRedVibrance": [], "ToggleBrightness": [], "ToggleCcBlue": [], "ToggleCcGreen": [], "ToggleCcRed": [], "ToggleColourmap": [], "ToggleColourReplace": [], "ToggleColourReplacePreserveLum": [], "ToggleContrast": [], "ToggleConvolution": [], "ToggleFlip": [], "ToggleGamma": [], "ToggleGlobalPca": [], "ToggleGrayscale": [], "ToggleHue": [], "ToggleInvert": [], "ToggleMorph": [], "ToggleNormalize": [], "TogglePseudoColour": [], "ToggleSaturation": [], "ToggleThreshold": [], "ToggleUnsharp": [], "ToggleVibrance": [] } }, "Basics.Float": { "args": [], "tags": { "Float": [] } }, "IIIF.Presentation.IIIFManifest": { "args": [], "tags": { "IIIFManifest": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Manifest"] } }, "IIIF.Presentation.IIIFResource": { "args": [], "tags": { "ResourceManifest": ["IIIF.Presentation.IIIFManifest"], "ResourceCollection": ["IIIF.Presentation.IIIFCollection"], "ResourceCanvas": ["IIIF.Presentation.IIIFCanvas"], "ResourceRange": ["IIIF.Presentation.IIIFRange"] } }, "Basics.Int": { "args": [], "tags": { "Int": [] } }, "List.List": { "args": ["a"], "tags": {} }, "Maybe.Maybe": { "args": ["a"], "tags": { "Just": ["a"], "Nothing": [] } }, "Result.Result": { "args": ["error", "value"], "tags": { "Ok": ["value"], "Err": ["error"] } }, "String.String": { "args": [], "tags": { "String": [] } }, "IIIF.Presentation.AnnotationSource": { "args": [], "tags": { "AnnotationSourceUrl": ["String.String"], "InlineAnnotationPage": ["Json.Decode.Value"] } }, "IIIF.Presentation.IIIFCanvas": { "args": [], "tags": { "IIIFCanvas": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Canvas"] } }, "IIIF.Presentation.IIIFCollection": { "args": [], "tags": { "IIIFCollection": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Collection"] } }, "IIIF.Presentation.IIIFRange": { "args": [], "tags": { "IIIFRange": ["IIIF.Version.IIIFVersion", "IIIF.Presentation.Range"] } }, "IIIF.Version.IIIFVersion": { "args": [], "tags": { "IIIFV1": [], "IIIFV2": [], "IIIFV3": [] } }, "IIIF.Presentation.ImageType": { "args": [], "tags": { "PrimaryImage": [], "ChoiceImage": [] } }, "IIIF.Image.ImageUri": { "args": [], "tags": { "InfoUri": ["IIIF.Image.ImageServerParameters"], "ImageUri": ["IIIF.Image.ImageRequestParameters"], "StaticImageUri": ["IIIF.Image.ImageServerParameters"] } }, "IIIF.Language.LanguageValues": { "args": [], "tags": { "LanguageValues": ["IIIF.Language.Language", "List.List String.String"] } }, "IIIF.Presentation.MediaFormats": { "args": [], "tags": { "ImageJpeg": [], "OtherFormat": ["String.String"] } }, "IIIF.Presentation.RangeItem": { "args": [], "tags": { "RangeCanvas": ["String.String"], "RangeRange": ["IIIF.Presentation.Range"] } }, "IIIF.Presentation.ResourceTypes": { "args": [], "tags": { "Video": [], "OtherResource": ["String.String"] } }, "IIIF.Presentation.ServiceTypes": { "args": [], "tags": { "ImageService1": [], "ImageService2": [], "ImageService3": [], "SearchService1": [], "AutoCompleteService1": [], "AuthTokenService1": [], "AuthLogoutService1": [], "UnknownService": [] } }, "Json.Encode.Value": { "args": [], "tags": { "Value": [] } }, "IIIF.Presentation.ViewingDirection": { "args": [], "tags": { "LeftToRight": [], "RightToLeft": [], "TopToBottom": [], "BottomToTop": [] } }, "IIIF.Presentation.ViewingLayout": { "args": [], "tags": { "LayoutV2": ["IIIF.Presentation.ViewingHint"], "LayoutV3": ["List.List IIIF.Presentation.Behavior"] } }, "IIIF.Presentation.Behavior": { "args": [], "tags": { "AutoAdvanceBehavior": [], "NoAutoAdvanceBehavior": [], "RepeatBehavior": [], "NoRepeatBehavior": [], "UnorderedBehavior": [], "IndividualsBehavior": [], "ContinuousBehavior": [], "PagedBehavior": [], "FacingPagesBehavior": [], "NonPagedBehavior": [], "MultiPartBehavior": [], "TogetherBehavior": [], "SequenceBehavior": [], "ThumbnailNavBehavior": [], "NoNavBehavior": [], "HiddenBehavior": [] } }, "IIIF.Presentation.CollectionItem": { "args": [], "tags": { "NestedCollection": ["IIIF.Presentation.Collection"], "ManifestItem": ["IIIF.Presentation.Manifest"] } }, "IIIF.Image.ImageFormat": { "args": [], "tags": { "JpegFormat": [], "TiffFormat": [], "PngFormat": [], "Jp2Format": [], "GifFormat": [], "PdfFormat": [], "WebpFormat": [] } }, "IIIF.Image.ImageQuality": { "args": [], "tags": { "ColorQuality": [], "GrayQuality": [], "BiTonalQuality": [], "DefaultQuality": [], "NativeQuality": [] } }, "IIIF.Image.ImageRegion": { "args": [], "tags": { "FullRegion": [], "SquareRegion": [], "SizeRegion": ["{ x : Basics.Int, y : Basics.Int, w : Basics.Int, h : Basics.Int }"], "PctSizeRegion": ["{ x : Basics.Float, y : Basics.Float, w : Basics.Float, h : Basics.Float }"] } }, "IIIF.Image.ImageRotation": { "args": [], "tags": { "NormalRotation": ["Basics.Float"], "MirroredRotation": ["Basics.Float"] } }, "IIIF.Image.ImageSize": { "args": [], "tags": { "MaxSize": [], "ExactMaxSize": [], "WidthOnlySize": ["Basics.Int"], "ExactWidthOnlySize": ["Basics.Int"], "HeightOnlySize": ["Basics.Int"], "ExactHeightOnlySize": ["Basics.Int"], "PercentSize": ["Basics.Float"], "ExactPercentSize": ["Basics.Float"], "WidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"], "ExactScaledWidthAndHeightSize": ["( Basics.Int, Basics.Int )"] } }, "IIIF.Language.Language": { "args": [], "tags": { "LanguageCode": ["String.String"], "None": [], "Default": [] } }, "IIIF.Presentation.ViewingHint": { "args": [], "tags": { "PagedHint": [], "IndividualsHint": [], "ContinuousHint": [], "MultiPartHint": [], "NonPagedHint": [], "TopHint": [], "FacingPagesHint": [] } } } } }) } };
 
   // src/auth.ts
   var STORAGE_PREFIX = "diva:iiif-auth2:";
@@ -31661,6 +32394,7 @@
   };
 
   // src/filters.ts
+  var pointwiseTransforms = /* @__PURE__ */ new WeakMap();
   function setFilterOptions(viewer, options) {
     if (!viewer) {
       throw new Error("A viewer must be specified.");
@@ -31670,6 +32404,63 @@
     } else {
       setOptions(viewer.filterPluginInstance, options || {});
     }
+  }
+  function batchFilterProcessors(processors) {
+    const result = [];
+    for (let start = 0; start < processors.length; ) {
+      let end = start;
+      while (end < processors.length && pointwiseTransforms.has(processors[end])) {
+        end += 1;
+      }
+      if (end - start < 2) {
+        result.push(processors[start]);
+        start += 1;
+      } else {
+        result.push(batchPointwiseProcessors(processors.slice(start, end)));
+        start = end;
+      }
+    }
+    return result;
+  }
+  function batchPointwiseProcessors(processors) {
+    const transforms = processors.map((processor) => pointwiseTransforms.get(processor));
+    return (context, callback) => {
+      let batched = false;
+      let first = 0;
+      if (context.globalAlpha === 1 && context.globalCompositeOperation === "source-over" && context.getTransform().isIdentity && (!context.filter || context.filter === "none") && context.shadowColor === "rgba(0, 0, 0, 0)") {
+        withImageData(context, (image) => {
+          batched = true;
+          for (let i = 3; i < image.data.length; i += 4) {
+            if (image.data[i] !== 255) {
+              batched = false;
+              break;
+            }
+          }
+          for (let i = 0; i < (batched ? transforms.length : 1); i += 1) {
+            transforms[i](image);
+          }
+          return true;
+        });
+        first = 1;
+      }
+      if (!batched) {
+        for (let i = first; i < processors.length; i += 1) {
+          processors[i](context, () => {
+          });
+        }
+      }
+      callback();
+    };
+  }
+  function pointwiseProcessor(transform, batchable = true) {
+    const processor = (context, callback) => {
+      withImageData(context, transform);
+      callback();
+    };
+    if (batchable) {
+      pointwiseTransforms.set(processor, transform);
+    }
+    return processor;
   }
   function readImageDataFromContext(context) {
     const width = context.canvas.width;
@@ -32021,11 +32812,20 @@
     }
     return output;
   };
-  function applyPixelTransformInPlace(transform) {
-    return function(context, callback) {
-      Filters._applyPixelTransformInPlace(context, transform);
-      callback();
-    };
+  function applyPixelTransformInPlace(transform, batchable = true) {
+    return pointwiseProcessor((image) => transformPixelBuffer(image, transform), batchable);
+  }
+  function transformPixelBuffer(image, transform) {
+    const pixels = image.data;
+    const out = [0, 0, 0, 0];
+    for (let i = 0; i < pixels.length; i += 4) {
+      transform(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3], out);
+      pixels[i] = out[0];
+      pixels[i + 1] = out[1];
+      pixels[i + 2] = out[2];
+      pixels[i + 3] = out[3];
+    }
+    return true;
   }
   function buildLuminance(data, width, height) {
     const length = width * height;
@@ -32036,16 +32836,12 @@
     return lum;
   }
   function withImageData(context, handler) {
-    const width = context.canvas.width;
-    const height = context.canvas.height;
-    const scratchContext = Filters._ensureScratchContext(width, height);
-    scratchContext.clearRect(0, 0, width, height);
-    scratchContext.drawImage(context.canvas, 0, 0);
-    const imgData = scratchContext.getImageData(0, 0, width, height);
+    const imgData = readImageDataFromContext(context);
+    const scratchContext = Filters._scratchContext;
     const didChange = handler(imgData);
     if (didChange) {
       scratchContext.putImageData(imgData, 0, 0);
-      context.clearRect(0, 0, width, height);
+      context.clearRect(0, 0, imgData.width, imgData.height);
       context.drawImage(Filters._scratchCanvas, 0, 0);
     }
   }
@@ -32305,33 +33101,41 @@
     const range1 = max1 - min1 || 1;
     const range2 = max2 - min2 || 1;
     const range3 = max3 - min3 || 1;
-    const toByte = (v, min, range) => clampByte((v - min) / range * 255);
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i] - mean[0];
-      const g = data[i + 1] - mean[1];
-      const b = data[i + 2] - mean[2];
-      const c1 = r * v1[0] + g * v1[1] + b * v1[2];
-      const c2 = r * v2[0] + g * v2[1] + b * v2[2];
-      const c3 = r * v3[0] + g * v3[1] + b * v3[2];
-      if (mode === "pca1") {
-        const v = toByte(c1, min1, range1);
+    applyPcaProjection(data, mode, pca, [min1, min2, min3], [range1, range2, range3], 0, 255, hueDegrees);
+  }
+  function applyPcaProjection(data, mode, basis, minima, divisors, offset, scale, hueDegrees) {
+    const mean = basis.mean;
+    const component = mode === "pca1" ? 0 : mode === "pca2" ? 1 : mode === "pca3" ? 2 : -1;
+    if (component >= 0) {
+      const vector = basis.vectors[component];
+      const min = minima[component];
+      const divisor = divisors[component];
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i] - mean[0];
+        const g = data[i + 1] - mean[1];
+        const b = data[i + 2] - mean[2];
+        const projection = r * vector[0] + g * vector[1] + b * vector[2];
+        const v = clampByte(offset + (projection - min) / divisor * scale);
         data[i] = v;
         data[i + 1] = v;
         data[i + 2] = v;
-      } else if (mode === "pca2") {
-        const v = toByte(c2, min2, range2);
-        data[i] = v;
-        data[i + 1] = v;
-        data[i + 2] = v;
-      } else if (mode === "pca3") {
-        const v = toByte(c3, min3, range3);
-        data[i] = v;
-        data[i + 1] = v;
-        data[i + 2] = v;
-      } else {
-        data[i] = toByte(c1, min1, range1);
-        data[i + 1] = toByte(c2, min2, range2);
-        data[i + 2] = toByte(c3, min3, range3);
+      }
+    } else {
+      const v1 = basis.vectors[0];
+      const v2 = basis.vectors[1];
+      const v3 = basis.vectors[2];
+      const min1 = minima[0], min2 = minima[1], min3 = minima[2];
+      const divisor1 = divisors[0], divisor2 = divisors[1], divisor3 = divisors[2];
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i] - mean[0];
+        const g = data[i + 1] - mean[1];
+        const b = data[i + 2] - mean[2];
+        const c1 = r * v1[0] + g * v1[1] + b * v1[2];
+        const c2 = r * v2[0] + g * v2[1] + b * v2[2];
+        const c3 = r * v3[0] + g * v3[1] + b * v3[2];
+        data[i] = clampByte(offset + (c1 - min1) / divisor1 * scale);
+        data[i + 1] = clampByte(offset + (c2 - min2) / divisor2 * scale);
+        data[i + 2] = clampByte(offset + (c3 - min3) / divisor3 * scale);
       }
     }
     applyHueRotationInPlace(data, hueDegrees);
@@ -32425,45 +33229,20 @@
     return computePcaBasisFromCov(stats.mean, cov);
   }
   function applyPcaColorWithBasis(imgData, mode, basis, hueDegrees) {
-    const data = imgData.data;
-    const mean = basis.mean;
-    const v1 = basis.vectors[0];
-    const v2 = basis.vectors[1];
-    const v3 = basis.vectors[2];
     const sigma1 = Math.sqrt(Math.max(1e-6, basis.values[0]));
     const sigma2 = Math.sqrt(Math.max(1e-6, basis.values[1]));
     const sigma3 = Math.sqrt(Math.max(1e-6, basis.values[2]));
     const scale = 3;
-    const toByte = (component, sigma) => clampByte(128 + component / (scale * sigma) * 127);
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i] - mean[0];
-      const g = data[i + 1] - mean[1];
-      const b = data[i + 2] - mean[2];
-      const c1 = r * v1[0] + g * v1[1] + b * v1[2];
-      const c2 = r * v2[0] + g * v2[1] + b * v2[2];
-      const c3 = r * v3[0] + g * v3[1] + b * v3[2];
-      if (mode === "pca1") {
-        const v = toByte(c1, sigma1);
-        data[i] = v;
-        data[i + 1] = v;
-        data[i + 2] = v;
-      } else if (mode === "pca2") {
-        const v = toByte(c2, sigma2);
-        data[i] = v;
-        data[i + 1] = v;
-        data[i + 2] = v;
-      } else if (mode === "pca3") {
-        const v = toByte(c3, sigma3);
-        data[i] = v;
-        data[i + 1] = v;
-        data[i + 2] = v;
-      } else {
-        data[i] = toByte(c1, sigma1);
-        data[i + 1] = toByte(c2, sigma2);
-        data[i + 2] = toByte(c3, sigma3);
-      }
-    }
-    applyHueRotationInPlace(data, hueDegrees);
+    applyPcaProjection(
+      imgData.data,
+      mode,
+      basis,
+      [0, 0, 0],
+      [scale * sigma1, scale * sigma2, scale * sigma3],
+      128,
+      127,
+      hueDegrees
+    );
   }
   var noopFilter = (_context, callback) => {
     callback();
@@ -32535,29 +33314,28 @@
     }
     return { r: Math.floor(r * 255), g: Math.floor(g * 255), b: Math.floor(b * 255) };
   }
+  function applyRgbLUT(lut) {
+    const transform = (imgData) => {
+      const pixels = imgData.data;
+      for (let i = 0; i < pixels.length; i += 4) {
+        pixels[i] = lut[pixels[i]];
+        pixels[i + 1] = lut[pixels[i + 1]];
+        pixels[i + 2] = lut[pixels[i + 2]];
+      }
+      return true;
+    };
+    return pointwiseProcessor(transform);
+  }
   function applyChannelLUT(channel, lut) {
-    if (channel === 0) {
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = lut[r];
-        out[1] = g;
-        out[2] = b;
-        out[3] = a;
-      });
-    }
-    if (channel === 1) {
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = r;
-        out[1] = lut[g];
-        out[2] = b;
-        out[3] = a;
-      });
-    }
-    return applyPixelTransformInPlace((r, g, b, a, out) => {
-      out[0] = r;
-      out[1] = g;
-      out[2] = lut[b];
-      out[3] = a;
-    });
+    const offset = channel === 0 ? 0 : channel === 1 ? 1 : 2;
+    const transform = (imgData) => {
+      const pixels = imgData.data;
+      for (let i = offset; i < pixels.length; i += 4) {
+        pixels[i] = lut[pixels[i]];
+      }
+      return true;
+    };
+    return pointwiseProcessor(transform);
   }
   function ccChannel(channel, adjustment) {
     const adj = adjustment / 100;
@@ -32680,24 +33458,7 @@
       return this._scratchContext;
     },
     _applyPixelTransformInPlace: function(context, transform) {
-      const width = context.canvas.width;
-      const height = context.canvas.height;
-      const scratchContext = this._ensureScratchContext(width, height);
-      scratchContext.clearRect(0, 0, width, height);
-      scratchContext.drawImage(context.canvas, 0, 0);
-      const imgData = scratchContext.getImageData(0, 0, width, height);
-      const pixels = imgData.data;
-      const out = [0, 0, 0, 0];
-      for (let i = 0, pxl = pixels.length; i < pxl; i += 4) {
-        transform(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3], out);
-        pixels[i] = out[0];
-        pixels[i + 1] = out[1];
-        pixels[i + 2] = out[2];
-        pixels[i + 3] = out[3];
-      }
-      scratchContext.putImageData(imgData, 0, 0);
-      context.clearRect(0, 0, width, height);
-      context.drawImage(this._scratchCanvas, 0, 0);
+      withImageData(context, (image) => transformPixelBuffer(image, transform));
     },
     THRESHOLDING: function(threshold) {
       if (threshold < 0 || threshold > 255) {
@@ -32751,12 +33512,7 @@
       for (let i = 0; i < 256; i += 1) {
         precomputedBrightness[i] = i + adjustment;
       }
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = precomputedBrightness[r];
-        out[1] = precomputedBrightness[g];
-        out[2] = precomputedBrightness[b];
-        out[3] = a;
-      });
+      return applyRgbLUT(precomputedBrightness);
     },
     CC_RED: function(adjustment) {
       return ccChannel(0, adjustment);
@@ -32775,12 +33531,7 @@
       for (let i = 0; i < 256; i += 1) {
         precomputedContrast[i] = i * adjustment;
       }
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = precomputedContrast[r];
-        out[1] = precomputedContrast[g];
-        out[2] = precomputedContrast[b];
-        out[3] = a;
-      });
+      return applyRgbLUT(precomputedContrast);
     },
     GAMMA: function(adjustment) {
       if (adjustment < 0) {
@@ -32790,12 +33541,7 @@
       for (let i = 0; i < 256; i += 1) {
         precomputedGamma[i] = Math.pow(i / 255, adjustment) * 255;
       }
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = precomputedGamma[r];
-        out[1] = precomputedGamma[g];
-        out[2] = precomputedGamma[b];
-        out[3] = a;
-      });
+      return applyRgbLUT(precomputedGamma);
     },
     GREYSCALE: function() {
       return applyPixelTransformInPlace((r, g, b, _a, out) => {
@@ -32811,12 +33557,7 @@
       for (let i = 0; i < 256; i += 1) {
         precomputedInvert[i] = 255 - i;
       }
-      return applyPixelTransformInPlace((r, g, b, a, out) => {
-        out[0] = precomputedInvert[r];
-        out[1] = precomputedInvert[g];
-        out[2] = precomputedInvert[b];
-        out[3] = a;
-      });
+      return applyRgbLUT(precomputedInvert);
     },
     MORPHOLOGICAL_OPERATION: function(kernelSize, comparator) {
       if (kernelSize % 2 === 0) {
@@ -32878,7 +33619,7 @@
         out[1] = c[1];
         out[2] = c[2];
         out[3] = 255;
-      });
+      }, false);
     },
     COLORMAP_PRESET: function(preset) {
       return getColormap(preset || "");
@@ -33181,19 +33922,7 @@
   };
   injectStyles(diva_default);
   var copyAnnotation = (annotation) => JSON.parse(JSON.stringify(annotation));
-  var annotationBodyText = (body) => {
-    if (typeof body === "string") {
-      return body;
-    }
-    if (Array.isArray(body)) {
-      return body.length > 0 ? annotationBodyText(body[0]) : "";
-    }
-    if (body && typeof body === "object") {
-      const value = body;
-      return typeof value.value === "string" ? value.value : typeof value.chars === "string" ? value.chars : "";
-    }
-    return "";
-  };
+  var annotationBodyText = (body) => annotationBodies(body).map((entry) => entry.value).join("\n\n");
   var plainAnnotationText = (html) => html.replace(/<[^>]*>/g, "");
   var selectorShape = (selector) => {
     var _a;
@@ -33235,11 +33964,21 @@
     if (!canvasId || !shape) {
       throw new TypeError("An annotation target must identify a Canvas and use a supported xywh or SVG selector.");
     }
-    const body = annotationBodyText((_b = annotation.body) != null ? _b : annotation.resource);
+    const bodies = annotationBodies((_b = annotation.body) != null ? _b : annotation.resource);
+    const body = bodies.map((entry) => entry.value).join("\n\n");
     return {
       canvasId,
       publicAnnotation: copyAnnotation(annotation),
-      viewerAnnotation: { id: annotation.id, text: plainAnnotationText(body), html: body, imageService, shape }
+      viewerAnnotation: {
+        id: annotation.id,
+        text: bodies.map((entry) => isPlainTextBody(entry) ? entry.value : plainAnnotationText(entry.value)).join(
+          "\n\n"
+        ),
+        html: body,
+        bodies,
+        imageService,
+        shape
+      }
     };
   };
   var publicAnnotationFromViewer = (canvasId, annotation) => {
@@ -33247,7 +33986,7 @@
     return {
       id: annotation.id,
       type: "Annotation",
-      body: { type: "TextualBody", value: (_a = annotation.html) != null ? _a : annotation.text },
+      body: annotation.bodies ? annotation.bodies.length === 1 ? { type: "TextualBody", ...annotation.bodies[0] } : annotation.bodies.map((body) => ({ type: "TextualBody", ...body })) : { type: "TextualBody", value: (_a = annotation.html) != null ? _a : annotation.text },
       target: annotation.shape.kind === "rect" ? {
         type: "SpecificResource",
         source: canvasId,
@@ -33288,6 +34027,7 @@
       this.filterViewer = null;
       this.filterViewerElement = null;
       this.filterOptions = null;
+      this.appliedPixelFilterKey = null;
       this.filterViewerFlipped = false;
       this.filterAccessBlocked = false;
       this.currentFilterSourceKey = null;
@@ -33302,6 +34042,8 @@
       this.pagesByLabel = /* @__PURE__ */ new Map();
       this.manifestAnnotationsByCanvas = /* @__PURE__ */ new Map();
       this.apiAnnotationsByCanvas = /* @__PURE__ */ new Map();
+      this.manifestAnnotationIndex = new AnnotationIndex();
+      this.apiAnnotationIndex = new AnnotationIndex();
       this.clearedAnnotationCanvases = /* @__PURE__ */ new Set();
       this.annotationImageServicesByCanvas = /* @__PURE__ */ new Map();
       this.annotationSelectionEnabled = true;
@@ -33352,6 +34094,7 @@
       this.handlePageChangeBound = this.handlePageChange.bind(this);
       this.handleAnnotationSelectBound = this.handleAnnotationSelect.bind(this);
       this.handlePageLoadedBound = this.handlePageLoaded.bind(this);
+      this.handlePreviewAnnotationsBound = this.handlePreviewAnnotations.bind(this);
       this.handleZoomChangeBound = this.handleZoomChange.bind(this);
       this.handleLoadingChangeBound = this.handleLoadingChange.bind(this);
       this.handleStaticImageCorsFallbackBound = this.handleStaticImageCorsFallback.bind(this);
@@ -33373,6 +34116,7 @@
           sidebarWidth,
           sidebarPanel,
           showTitle: flags.showTitle !== false,
+          showLogoutButton: flags.showLogoutButton !== false,
           userLanguage: flags.setLanguage || langCode,
           enableAnnotations: flags.enableAnnotations === true,
           enableAnnotationSelection: flags.enableAnnotationSelection !== false,
@@ -33392,6 +34136,7 @@
       this.bindPageChange();
       this.bindViewerEvent("diva-annotation-select", this.handleAnnotationSelectBound);
       this.bindViewerEvent("diva-page-loaded", this.handlePageLoadedBound);
+      this.bindViewerEvent("diva-preview-annotations-requested", this.handlePreviewAnnotationsBound);
       this.bindFullscreenChange();
       this.bindZoomChange();
       this.bindLoadingChange();
@@ -33427,11 +34172,16 @@
       return this.root;
     }
     bindPorts() {
+      this.getPort("pagePreviewPoliciesUpdated").subscribe((policies) => {
+        this.callViewerMethodWhenReady("setPagePreviewPolicies", policies);
+      });
       this.getPort("tileSourcesUpdated").subscribe((update) => {
         if (this.annotationResourceId !== update.resourceId) {
           this.annotationResourceId = update.resourceId;
           this.manifestAnnotationsByCanvas.clear();
           this.apiAnnotationsByCanvas.clear();
+          this.manifestAnnotationIndex.clear();
+          this.apiAnnotationIndex.clear();
           this.clearedAnnotationCanvases.clear();
           this.annotationImageServicesByCanvas.clear();
         }
@@ -33460,6 +34210,12 @@
               viewerAnnotation: { ...annotation, imageService: (_a = annotation.imageService) != null ? _a : null }
             };
           })
+        );
+        this.manifestAnnotationIndex.set(
+          value.canvasId,
+          this.manifestAnnotationsByCanvas.get(value.canvasId),
+          (annotation) => annotation.viewerAnnotation.id,
+          true
         );
         this.applyAnnotationsForCanvas(value.canvasId);
       });
@@ -33527,10 +34283,15 @@
       this.getPort("copyToClipboard").subscribe((text) => {
         this.copyToClipboard(text);
       });
-      this.getPort("authSourcesInvalidated").subscribe((sourceIds) => {
-        this.auth.invalidateSources(sourceIds);
-        this.callViewerMethodWhenReady("invalidateTileSources", sourceIds);
-      });
+      this.getPort("authSourcesInvalidated").subscribe((sourceIds) => this.invalidateSources(sourceIds));
+    }
+    invalidateSources(sourceIds) {
+      this.auth.invalidateSources(sourceIds);
+      this.callViewerMethodWhenReady("invalidateTileSources", sourceIds);
+      if (this.currentFilterSourceKey && sourceIds.includes(JSON.parse(this.currentFilterSourceKey)[0])) {
+        this.currentFilterSourceKey = null;
+        this.appliedPixelFilterKey = null;
+      }
     }
     ensureMainViewer() {
       const current = document.getElementById("main-viewer");
@@ -33575,18 +34336,25 @@
       );
     }
     findStoredAnnotation(annotationId) {
-      for (const canvasId of /* @__PURE__ */ new Set([
-        ...this.manifestAnnotationsByCanvas.keys(),
-        ...this.apiAnnotationsByCanvas.keys()
-      ])) {
-        const annotation = this.effectiveAnnotationsForCanvas(canvasId).find(
-          (candidate) => candidate.viewerAnnotation.id === annotationId
-        );
-        if (annotation) {
-          return annotation;
+      var _a, _b, _c;
+      const manifest = this.manifestAnnotationIndex.entries(annotationId);
+      const api = this.apiAnnotationIndex.entries(annotationId);
+      let found;
+      let firstManifest = Infinity;
+      let firstApi = Infinity;
+      for (const canvasId of /* @__PURE__ */ new Set([...(_a = manifest == null ? void 0 : manifest.keys()) != null ? _a : [], ...(_b = api == null ? void 0 : api.keys()) != null ? _b : []])) {
+        if (this.clearedAnnotationCanvases.has(canvasId)) {
+          continue;
+        }
+        const manifestRank = this.manifestAnnotationIndex.rank(canvasId);
+        const apiRank = manifestRank === Infinity ? this.apiAnnotationIndex.rank(canvasId) : -1;
+        if (manifestRank < firstManifest || manifestRank === firstManifest && apiRank < firstApi) {
+          found = (_c = api == null ? void 0 : api.get(canvasId)) != null ? _c : manifest == null ? void 0 : manifest.get(canvasId);
+          firstManifest = manifestRank;
+          firstApi = apiRank;
         }
       }
-      return void 0;
+      return found;
     }
     rebuildPageIndexes() {
       this.pagesByCanvasId.clear();
@@ -33646,7 +34414,7 @@
         };
         const viewer = this.ensureMainViewer();
         const sourceId = (_a = this.pages[pageIndex]) == null ? void 0 : _a.primaryImage.id;
-        if (sourceId && viewer && typeof viewer.isPageLoaded === "function" && viewer.isPageLoaded(pageIndex, sourceId)) {
+        if (sourceId && viewer && typeof viewer.isPageLoaded === "function" && viewer.isPageLoaded(pageIndex, sourceId, requestId)) {
           this.completeResource(requestId, url, !replacementCommitted);
         }
         return;
@@ -33830,26 +34598,33 @@
      * Add or replace one API-supplied Web Annotation on a loaded Canvas.
      */
     setAnnotation(annotation) {
-      var _a, _b;
+      var _a, _b, _c, _d;
       this.assertAlive();
       const stored = normalizePublicAnnotation(annotation);
       if (!this.pagesByCanvasId.has(stored.canvasId)) {
         throw new RangeError(`Annotation Canvas ${stored.canvasId} is not part of the loaded manifest.`);
       }
       stored.viewerAnnotation.imageService = (_a = this.annotationImageServicesByCanvas.get(stored.canvasId)) != null ? _a : null;
-      this.apiAnnotationsByCanvas.forEach((annotations2, canvasId) => {
-        const retained = annotations2.filter(
+      const affected = new Set(
+        Array.from((_c = (_b = this.apiAnnotationIndex.entries(stored.viewerAnnotation.id)) == null ? void 0 : _b.keys()) != null ? _c : []).sort((left, right) => this.apiAnnotationIndex.rank(left) - this.apiAnnotationIndex.rank(right))
+      );
+      affected.forEach((canvasId) => {
+        const retained = this.apiAnnotationsByCanvas.get(canvasId).filter(
           (candidate) => candidate.viewerAnnotation.id !== stored.viewerAnnotation.id
         );
-        if (retained.length !== annotations2.length) {
-          this.apiAnnotationsByCanvas.set(canvasId, retained);
-          this.applyAnnotationsForCanvas(canvasId);
-        }
+        this.apiAnnotationsByCanvas.set(canvasId, retained);
+        this.apiAnnotationIndex.set(canvasId, retained, (annotation2) => annotation2.viewerAnnotation.id);
       });
-      const annotations = (_b = this.apiAnnotationsByCanvas.get(stored.canvasId)) != null ? _b : [];
+      const annotations = (_d = this.apiAnnotationsByCanvas.get(stored.canvasId)) != null ? _d : [];
       this.apiAnnotationsByCanvas.set(stored.canvasId, [...annotations, stored]);
+      this.apiAnnotationIndex.set(
+        stored.canvasId,
+        this.apiAnnotationsByCanvas.get(stored.canvasId),
+        (annotation2) => annotation2.viewerAnnotation.id
+      );
       this.clearedAnnotationCanvases.delete(stored.canvasId);
-      this.applyAnnotationsForCanvas(stored.canvasId);
+      affected.add(stored.canvasId);
+      affected.forEach((canvasId) => this.applyAnnotationsForCanvas(canvasId));
     }
     /**
      * Replace the API-supplied annotation set for the loaded manifest.
@@ -33861,24 +34636,27 @@
       }
       const next = /* @__PURE__ */ new Map();
       annotations.forEach((annotation) => {
-        var _a, _b;
+        var _a;
         const stored = normalizePublicAnnotation(annotation);
         if (!this.pagesByCanvasId.has(stored.canvasId)) {
           throw new RangeError(`Annotation Canvas ${stored.canvasId} is not part of the loaded manifest.`);
         }
         stored.viewerAnnotation.imageService = (_a = this.annotationImageServicesByCanvas.get(stored.canvasId)) != null ? _a : null;
-        const canvasAnnotations = (_b = next.get(stored.canvasId)) != null ? _b : [];
-        next.set(stored.canvasId, [
-          ...canvasAnnotations.filter(
-            (candidate) => candidate.viewerAnnotation.id !== stored.viewerAnnotation.id
-          ),
-          stored
-        ]);
+        let canvasAnnotations = next.get(stored.canvasId);
+        if (!canvasAnnotations) {
+          canvasAnnotations = /* @__PURE__ */ new Map();
+          next.set(stored.canvasId, canvasAnnotations);
+        }
+        canvasAnnotations.delete(stored.viewerAnnotation.id);
+        canvasAnnotations.set(stored.viewerAnnotation.id, stored);
       });
       const affected = /* @__PURE__ */ new Set([...this.apiAnnotationsByCanvas.keys(), ...next.keys()]);
       this.apiAnnotationsByCanvas.clear();
+      this.apiAnnotationIndex.clear();
       next.forEach((canvasAnnotations, canvasId) => {
-        this.apiAnnotationsByCanvas.set(canvasId, canvasAnnotations);
+        const stored = Array.from(canvasAnnotations.values());
+        this.apiAnnotationsByCanvas.set(canvasId, stored);
+        this.apiAnnotationIndex.set(canvasId, stored, (annotation) => annotation.viewerAnnotation.id);
         this.clearedAnnotationCanvases.delete(canvasId);
       });
       affected.forEach((canvasId) => this.applyAnnotationsForCanvas(canvasId));
@@ -33904,6 +34682,7 @@
       this.assertAlive();
       this.clearedAnnotationCanvases.add(uri);
       this.apiAnnotationsByCanvas.delete(uri);
+      this.apiAnnotationIndex.delete(uri);
       this.applyAnnotationsForCanvas(uri);
     }
     /**
@@ -33912,6 +34691,7 @@
     clearAllAnnotations() {
       this.assertAlive();
       this.apiAnnotationsByCanvas.clear();
+      this.apiAnnotationIndex.clear();
       this.pages.forEach((page) => {
         this.clearedAnnotationCanvases.add(page.canvasId);
         this.applyAnnotationsForCanvas(page.canvasId);
@@ -33977,6 +34757,8 @@
     }
     /**
      * Return an annotation body's textual or HTML value, if present.
+     * Multiple textual bodies are returned in source order, separated by blank
+     * lines. This returns source content, not sanitized inspector markup.
      */
     getAnnotationBody(annotationId) {
       var _a;
@@ -34303,6 +35085,8 @@
       this.updateState({ destroyed: true, loading: false });
       this.closeFilterPreview();
       this.auth.destroy();
+      this.manifestAnnotationIndex.clear();
+      this.apiAnnotationIndex.clear();
       if (this.viewerMethodRafId !== null) {
         cancelAnimationFrame(this.viewerMethodRafId);
         this.viewerMethodRafId = null;
@@ -34311,6 +35095,10 @@
       const root = this.getConnectedRoot();
       this.removeViewerEvent("diva-page-change", this.handlePageChangeBound);
       this.removeViewerEvent("diva-page-loaded", this.handlePageLoadedBound);
+      this.removeViewerEvent(
+        "diva-preview-annotations-requested",
+        this.handlePreviewAnnotationsBound
+      );
       this.removeViewerEvent("diva-zoom-change", this.handleZoomChangeBound);
       this.removeViewerEvent("diva-loading-change", this.handleLoadingChangeBound);
       this.removeViewerEvent(
@@ -34348,6 +35136,7 @@
       this.currentFilterSourceKey = null;
       this.pendingFilterPreview = null;
       this.filterOptions = null;
+      this.appliedPixelFilterKey = null;
       this.setFilterAccessBlocked(false);
       this.filterPreviewRetries = 0;
     }
@@ -34420,6 +35209,12 @@
       const annotationId = (_a = event.detail) == null ? void 0 : _a.annotationId;
       if (typeof annotationId === "string") {
         this.emit("annotationselect", { annotationId });
+      }
+    }
+    handlePreviewAnnotations(event) {
+      const detail = event.detail;
+      if ((detail == null ? void 0 : detail.resourceId) === this.annotationResourceId && Array.isArray(detail.indexes)) {
+        this.getPort("viewerAnnotationPagesRequested").send(detail.indexes);
       }
     }
     handlePageLoaded(event) {
@@ -34514,6 +35309,7 @@
           this.filterViewer.viewport.fitBounds(this.filterViewer.world.getHomeBounds(), true);
         }
         this.filterViewerFlipped = false;
+        this.appliedPixelFilterKey = null;
         this.applyFilterOptions();
       });
     }
@@ -34529,6 +35325,7 @@
         }
         this.filterViewer = null;
         this.currentFilterSourceKey = null;
+        this.appliedPixelFilterKey = null;
         this.filterViewerFlipped = false;
         this.filterViewerElement = element;
       }
@@ -34539,13 +35336,15 @@
       if (!this.filterViewer) {
         return;
       }
-      if (this.filterAccessBlocked) {
-        setFilterOptions(this.filterViewer, { filters: [] });
-        return;
+      const update = buildFilterOptions(
+        this.filterAccessBlocked ? null : this.filterOptions,
+        this.appliedPixelFilterKey
+      );
+      if (update) {
+        setFilterOptions(this.filterViewer, update.options);
+        this.appliedPixelFilterKey = update.key;
       }
-      const options = buildFilterOptions(this.filterOptions);
-      setFilterOptions(this.filterViewer, options);
-      if (this.filterViewer.viewport) {
+      if (!this.filterAccessBlocked && this.filterViewer.viewport) {
         const rotation = ((_a = this.filterOptions) == null ? void 0 : _a.rotation) || 0;
         this.filterViewer.viewport.setRotation(rotation);
         const shouldFlip = Boolean((_b = this.filterOptions) == null ? void 0 : _b.flip);
@@ -34587,6 +35386,9 @@
       return typeof tileSource === "object" && tileSource !== null && tileSource.type === "image" && tileSource.crossOriginPolicy === false;
     }
     setFilterAccessBlocked(blocked) {
+      if (this.filterAccessBlocked !== blocked) {
+        this.appliedPixelFilterKey = null;
+      }
       this.filterAccessBlocked = blocked;
       const sidebar = this.root.querySelector(".diva-modal-sidebar");
       if (!sidebar) {
@@ -34715,36 +35517,6 @@
       viewer.removeEventListener(name, handler);
     }
   };
-  var filterFunctions = {
-    THRESHOLDING: Filters.THRESHOLDING,
-    BRIGHTNESS: Filters.BRIGHTNESS,
-    SATURATION: Filters.SATURATION,
-    VIBRANCE: Filters.VIBRANCE,
-    HUE: Filters.HUE,
-    CC_RED: Filters.CC_RED,
-    CC_GREEN: Filters.CC_GREEN,
-    CC_BLUE: Filters.CC_BLUE,
-    CONTRAST: Filters.CONTRAST,
-    GAMMA: Filters.GAMMA,
-    GREYSCALE: Filters.GREYSCALE,
-    INVERT: Filters.INVERT,
-    BACKGROUND_NORMALIZE: Filters.BACKGROUND_NORMALIZE,
-    UNSHARP_MASK: Filters.UNSHARP_MASK,
-    ALT_RED_GAMMA: Filters.ALT_RED_GAMMA,
-    ALT_GREEN_GAMMA: Filters.ALT_GREEN_GAMMA,
-    ALT_BLUE_GAMMA: Filters.ALT_BLUE_GAMMA,
-    ALT_RED_SIGMOID: Filters.ALT_RED_SIGMOID,
-    ALT_GREEN_SIGMOID: Filters.ALT_GREEN_SIGMOID,
-    ALT_BLUE_SIGMOID: Filters.ALT_BLUE_SIGMOID,
-    ALT_RED_HUE: Filters.ALT_RED_HUE,
-    ALT_GREEN_HUE: Filters.ALT_GREEN_HUE,
-    ALT_BLUE_HUE: Filters.ALT_BLUE_HUE,
-    ALT_RED_VIBRANCE: Filters.ALT_RED_VIBRANCE,
-    ALT_GREEN_VIBRANCE: Filters.ALT_GREEN_VIBRANCE,
-    ALT_BLUE_VIBRANCE: Filters.ALT_BLUE_VIBRANCE,
-    GLOBAL_PCA_COLOR: Filters.GLOBAL_PCA_COLOR,
-    ADAPTIVE_THRESHOLD: Filters.ADAPTIVE_THRESHOLD
-  };
   var simpleFilterMappings = [
     { enabled: "thresholdEnabled", filter: "THRESHOLDING", args: ["threshold"] },
     { enabled: "brightnessEnabled", filter: "BRIGHTNESS", args: ["brightness"] },
@@ -34796,7 +35568,7 @@
       defaults: [15, 10]
     }
   ];
-  var appendMappedProcessors = (processors, filters, mappings) => {
+  var appendMappedFilters = (steps, filters, mappings) => {
     var _a, _b;
     for (const mapping of mappings) {
       if (filters[mapping.enabled]) {
@@ -34804,63 +35576,73 @@
           var _a2, _b2, _c;
           return (_c = filters[key]) != null ? _c : (_b2 = (_a2 = mapping.defaults) == null ? void 0 : _a2[i]) != null ? _b2 : 0;
         })) != null ? _b : [];
-        const filterFn = filterFunctions[mapping.filter];
-        processors.push(filterFn(...filterArgs));
+        steps.push([mapping.filter, filterArgs]);
       }
     }
   };
-  var buildFilterOptions = (filters) => {
+  var buildFilterOptions = (filters, previousKey) => {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    if (!filters) {
-      return { filters: [], loadMode: "sync" };
-    }
-    const processors = [];
-    appendMappedProcessors(processors, filters, simpleFilterMappings);
+    filters = filters || {};
+    const steps = [];
+    appendMappedFilters(steps, filters, simpleFilterMappings);
     if (filters.morphEnabled) {
-      const comparator = filters.morphOperation === "dilate" ? Math.max : Math.min;
-      processors.push(Filters.MORPHOLOGICAL_OPERATION((_a = filters.morphKernel) != null ? _a : 3, comparator));
+      steps.push(["MORPHOLOGICAL_OPERATION", [
+        (_a = filters.morphKernel) != null ? _a : 3,
+        filters.morphOperation === "dilate" ? "dilate" : "erode"
+      ]]);
     }
     if (filters.convolutionEnabled) {
       const kernel = Filters.CONVOLUTION_PRESET(filters.convolutionPreset || "");
       if (kernel) {
-        processors.push(Filters.CONVOLUTION(kernel));
+        steps.push(["CONVOLUTION", [filters.convolutionPreset || ""]]);
       }
     }
     if (filters.colourmapEnabled) {
       const colourmap = Filters.COLORMAP_PRESET(filters.colourmapPreset || "");
       if (colourmap) {
-        processors.push(Filters.COLORMAP(colourmap, (_b = filters.colourmapCenter) != null ? _b : 128));
+        steps.push(["COLORMAP", [filters.colourmapPreset || "", (_b = filters.colourmapCenter) != null ? _b : 128]]);
       }
     }
     if (filters.pseudoColourEnabled) {
-      processors.push(
-        Filters.PSEUDOCOLOR(
+      steps.push(
+        ["PSEUDOCOLOR", [
           filters.pseudoColourMode || "",
           (_c = filters.pseudoColourRed) != null ? _c : 1,
           (_d = filters.pseudoColourGreen) != null ? _d : 1,
           (_e = filters.pseudoColourBlue) != null ? _e : 1
-        )
+        ]]
       );
     }
     if (filters.globalPcaEnabled) {
-      processors.push(Filters.GLOBAL_PCA_COLOR(filters.pcaMode || "", (_f = filters.pcaHue) != null ? _f : 0));
+      steps.push(["GLOBAL_PCA_COLOR", [filters.pcaMode || "", (_f = filters.pcaHue) != null ? _f : 0]]);
     }
     if (filters.colourReplaceEnabled) {
-      processors.push(
-        Filters.COLOR_REPLACE(
+      steps.push(
+        ["COLOR_REPLACE", [
           filters.colourReplaceSource || "#ffffff",
           filters.colourReplaceTarget || "#ffffff",
           (_g = filters.colourReplaceTolerance) != null ? _g : 24,
           (_h = filters.colourReplaceBlend) != null ? _h : 1,
           (_i = filters.colourReplacePreserveLum) != null ? _i : false
-        )
+        ]]
       );
     }
-    appendMappedProcessors(processors, filters, altFilterMappings);
-    if (processors.length === 0) {
-      return { filters: [], loadMode: "sync" };
+    appendMappedFilters(steps, filters, altFilterMappings);
+    const key = JSON.stringify(steps);
+    if (key === previousKey) {
+      return null;
     }
-    return { filters: { processors }, loadMode: "sync" };
+    const processors = batchFilterProcessors(steps.map(([name, args]) => {
+      if (name === "MORPHOLOGICAL_OPERATION") {
+        args = [args[0], args[1] === "dilate" ? Math.max : Math.min];
+      } else if (name === "CONVOLUTION") {
+        args = [Filters.CONVOLUTION_PRESET(args[0])];
+      } else if (name === "COLORMAP") {
+        args = [Filters.COLORMAP_PRESET(args[0]), args[1]];
+      }
+      return Filters[name](...args);
+    }));
+    return { key, options: { filters: processors.length ? { processors } : [], loadMode: "sync" } };
   };
   window.Diva = Diva;
 })();
