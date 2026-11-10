@@ -8,7 +8,7 @@ viewerHeight: "70vh"
 
 This page lets you experiment with manifests from different providers, or you can provide your own with the "Custom URL" option.
 
-Enable **Load manifest annotations** to display Web Annotations advertised by the selected manifest. Many manifests do not provide annotations, so no overlays will appear unless the resource includes them.
+Check **Enable manifest annotations** to display Web Annotations advertised by the selected manifest. Many manifests do not provide annotations, so no overlays will appear unless the resource includes them.
 
 Note that not all the options work for all the providers! So if you get an error, or it does not work as expected, then try something different.
 
